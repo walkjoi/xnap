@@ -203,4 +203,55 @@ struct ScrollStitcherTests {
         let back = try #require(Bitmap(cgImage: image))
         #expect(back == doc)
     }
+
+    /// `takeImage` assembles the result in one buffer instead of going through `stack` and
+    /// then a `Data` copy, so it has to agree with `makeBitmap` pixel for pixel.
+    @Test func takeImageMatchesTheStitchedBitmap() throws {
+        let doc = makeDocument(width: width, height: 2000, seed: 23)
+        let header = solid(width: width, height: 40, value: 80)
+        let footer = solid(width: width, height: 25, value: 210)
+        let stitcher = ScrollStitcher()
+        for offset in stride(from: 0, through: 900, by: 150) {
+            stitcher.add(frame(doc, offset: offset, height: viewport, header: header, footer: footer))
+        }
+        let expected = try #require(stitcher.makeBitmap())
+
+        let image = try #require(stitcher.takeImage())
+        #expect(image.width == expected.width)
+        #expect(image.height == expected.height)
+        let roundTripped = try #require(Bitmap(cgImage: image))
+        #expect(roundTripped == expected)
+    }
+
+    /// It is named `take` because it consumes the stitcher: the slices are released as they
+    /// are copied, so a tall capture never needs two copies of itself in memory at once.
+    @Test func takeImageReleasesTheSlices() {
+        let doc = makeDocument(width: width, height: 1500, seed: 31)
+        let stitcher = ScrollStitcher()
+        for offset in stride(from: 0, through: 600, by: 200) {
+            stitcher.add(frame(doc, offset: offset, height: viewport))
+        }
+        #expect(stitcher.hasContent)
+        #expect(stitcher.takeImage() != nil)
+        #expect(!stitcher.hasContent)
+        #expect(stitcher.takeImage() == nil)
+    }
+
+    @Test func stackedImageConcatenatesAndEmptiesItsInput() throws {
+        let top = solid(width: 32, height: 10, value: 40)
+        let bottom = solid(width: 32, height: 6, value: 200)
+        var parts = [top, bottom]
+        let image = try #require(Bitmap.stackedImage(consuming: &parts))
+        #expect(parts.isEmpty)
+        #expect(image.height == 16)
+        let roundTripped = try #require(Bitmap(cgImage: image))
+        #expect(roundTripped == Bitmap.stack([top, bottom]))
+    }
+
+    @Test func stackedImageRejectsMismatchedWidths() {
+        var parts = [solid(width: 32, height: 4, value: 10), solid(width: 16, height: 4, value: 10)]
+        #expect(Bitmap.stackedImage(consuming: &parts) == nil)
+        var empty: [Bitmap] = []
+        #expect(Bitmap.stackedImage(consuming: &empty) == nil)
+    }
 }

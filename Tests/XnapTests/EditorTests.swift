@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import SwiftUI
 import Testing
+import XnapCore
 @testable import Xnap
 
 /// Set XNAP_SNAPSHOT_DIR to write rendered PNGs for visual inspection.
@@ -177,11 +178,60 @@ struct EditorTests {
         #expect(shot.width > 0)
     }
 
+    /// The canvas repaints only the region that changed instead of the whole view, so the risk
+    /// is an edit that stops invalidating anything at all and leaves stale pixels on screen.
+    @Test func everyKindOfEditInvalidatesTheCanvas() {
+        _ = NSApplication.shared
+        let doc = EditorDocument(image: sampleImage(), scale: 2)
+        let canvas = CanvasView(document: doc)
+        let window = NSWindow(contentRect: canvas.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = canvas
+
+        func invalidates(_ what: String, _ change: () -> Void) {
+            canvas.displayIfNeeded()
+            #expect(!canvas.needsDisplay, "\(what): the canvas was still dirty to begin with")
+            change()
+            #expect(canvas.needsDisplay, "\(what) left the canvas stale")
+        }
+
+        // Two annotations, so that reordering is a visible change rather than a no-op.
+        let first = doc.newAnnotation(.rectangle(CGRect(x: 40, y: 40, width: 120, height: 80)))
+        let second = doc.newAnnotation(.ellipse(CGRect(x: 300, y: 200, width: 160, height: 100)))
+        invalidates("adding an annotation") { doc.add(first) }
+        invalidates("adding a second annotation") { doc.add(second) }
+        invalidates("moving an annotation") {
+            doc.replace(doc.annotations[0].translated(by: CGSize(width: 30, height: 20)))
+        }
+        invalidates("restyling the selection") { doc.color = .green }
+        invalidates("deselecting") { doc.selectedID = nil }
+        invalidates("selecting") { doc.selectedID = first.id }
+        invalidates("reordering") { doc.bringSelectionToFront() }
+        invalidates("deleting") { doc.deleteSelection() }
+        invalidates("switching tool") { doc.tool = .crop }
+        invalidates("starting a crop") { doc.cropRect = CGRect(x: 10, y: 10, width: 200, height: 150) }
+        invalidates("resizing a crop") { doc.cropRect = CGRect(x: 10, y: 10, width: 260, height: 150) }
+        invalidates("applying a crop") { doc.applyCrop() }
+        // Undo restores the image, whichever group the manager has coalesced.
+        invalidates("undo") { doc.undoManager.undo() }
+    }
+
     @Test func encodesRetinaDPI() throws {
         let data = try #require(OutputManager.shared.encode(sampleImage(), scale: 2, as: .png))
         let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
         let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         #expect((props?[kCGImagePropertyDPIWidth] as? Double) == 144)
+    }
+
+    /// Encoding is the slow part of a capture, so it runs off the main thread. The background
+    /// path has to produce exactly what the synchronous one does.
+    @Test func backgroundEncodingMatchesTheSynchronousPath() async throws {
+        let image = sampleImage(width: 240, height: 160)
+        for format in Preferences.ImageFormat.allCases {
+            let expected = try #require(OutputManager.shared.encode(image, scale: 2, as: format))
+            let actual = try await OutputManager.shared.encoded(image, scale: 2, as: format)
+            #expect(actual == expected)
+        }
     }
 
     @Test func fileNamesAreReadableAndSortable() {
@@ -190,6 +240,145 @@ struct EditorTests {
         components.hour = 21; components.minute = 5; components.second = 9
         let date = Calendar.current.date(from: components)!
         #expect(OutputManager.shared.defaultBaseName(date: date) == "Xnap 2026-09-23 at 21.05.09")
+    }
+}
+
+/// A capture lives a long time — on the clipboard, in undo states, in a pinned window — and
+/// the app runs for weeks, so a capture must never keep the display snapshot it came from.
+@Suite("CaptureMemory")
+@MainActor
+struct CaptureMemoryTests {
+    /// Every pixel encodes its own coordinates, so a mis-oriented crop can't go unnoticed.
+    private func coded(width: Int, height: Int) -> Bitmap {
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                pixels[i] = UInt8(x & 0xFF)             // B
+                pixels[i + 1] = UInt8(y & 0xFF)         // G
+                pixels[i + 2] = UInt8((x ^ y) & 0xFF)   // R
+                pixels[i + 3] = 255
+            }
+        }
+        return Bitmap(width: width, height: height, pixels: pixels)
+    }
+
+    @Test func croppedCopyDetachesFromTheParentImage() throws {
+        let parent = try #require(coded(width: 256, height: 128).makeCGImage())
+        let rect = CGRect(x: 32, y: 16, width: 64, height: 48)
+
+        // cropping(to:) inherits the parent's row stride because it is only a window onto
+        // the parent's pixels — which is exactly why it keeps them all alive.
+        let shared = try #require(parent.cropping(to: rect))
+        #expect(shared.bytesPerRow == parent.bytesPerRow)
+
+        let detached = try #require(parent.croppedCopy(to: rect))
+        #expect(detached.width == 64 && detached.height == 48)
+        #expect(detached.bytesPerRow < parent.bytesPerRow)
+    }
+
+    @Test func croppedCopyMatchesCroppingPixelForPixel() throws {
+        let source = coded(width: 256, height: 128)
+        let parent = try #require(source.makeCGImage())
+        let rect = CGRect(x: 32, y: 16, width: 64, height: 48)
+        let detachedImage = try #require(parent.croppedCopy(to: rect))
+        let detached = try #require(Bitmap(cgImage: detachedImage))
+        let sharedImage = try #require(parent.cropping(to: rect))
+        let shared = try #require(Bitmap(cgImage: sharedImage))
+        #expect(detached == shared)
+        // Top-left origin, like cropping(to:): the first pixel is the source pixel at (32, 16).
+        let i = (16 * source.width + 32) * 4
+        #expect(Array(detached.pixels[0..<3]) == Array(source.pixels[i..<(i + 3)]))
+    }
+
+    @Test func croppedCopyClampsToTheImage() throws {
+        let parent = try #require(coded(width: 64, height: 64).makeCGImage())
+        let edge = try #require(parent.croppedCopy(to: CGRect(x: 48, y: 48, width: 64, height: 64)))
+        #expect(edge.width == 16 && edge.height == 16)
+        #expect(parent.croppedCopy(to: CGRect(x: 100, y: 100, width: 10, height: 10)) == nil)
+    }
+
+    @Test func croppingInTheEditorDropsTheUncroppedPixels() throws {
+        let image = try #require(coded(width: 256, height: 128).makeCGImage())
+        let doc = EditorDocument(image: image, scale: 2)
+        let strideBefore = doc.image.bytesPerRow
+        doc.tool = .crop
+        doc.cropRect = CGRect(x: 16, y: 16, width: 64, height: 48)
+        doc.applyCrop()
+        #expect(doc.image.width == 64 && doc.image.height == 48)
+        #expect(doc.image.bytesPerRow < strideBefore)
+    }
+
+    /// Guards against the document outliving its window: it owns three block-based
+    /// notification observations, which stay registered unless `deinit` removes them.
+    @Test func editorDocumentDeallocatesWithItsObservers() throws {
+        let image = try #require(coded(width: 64, height: 48).makeCGImage())
+        weak var released: EditorDocument?
+        do {
+            let doc = EditorDocument(image: image, scale: 2)
+            doc.add(doc.newAnnotation(.counter(.zero, 1)))
+            #expect(doc.canUndo)
+            released = doc
+        }
+        #expect(released == nil)
+        // The notifications it listened for must not reach anything now.
+        for name in [Notification.Name.NSUndoManagerDidCloseUndoGroup, .NSUndoManagerDidUndoChange,
+                     .NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.post(name: name, object: nil)
+        }
+    }
+
+    /// The pasteboard's TIFF promise must not pin a whole capture: it keeps the PNG bytes
+    /// that are already on the clipboard, and only one promise is alive at a time.
+    @Test func clipboardTIFFPromiseIsFulfilledFromThePNG() async throws {
+        let image = try #require(coded(width: 64, height: 48).makeCGImage())
+        try await OutputManager.shared.copy(image, scale: 2)
+        let board = NSPasteboard.general
+        #expect(board.data(forType: .png) != nil)
+        let tiff = try #require(board.data(forType: .tiff))
+        let rep = try #require(NSBitmapImageRep(data: tiff))
+        #expect(rep.pixelsWide == 64 && rep.pixelsHigh == 48)
+        #expect(rep.size == CGSize(width: 32, height: 24)) // 48 x 64 px at 2x
+    }
+}
+
+@Suite("Loupe")
+struct LoupeTests {
+    private let span = 15
+
+    @Test func centresTheWindowAwayFromTheEdges() {
+        let w = Loupe.window(x: 100, y: 80, width: 400, height: 300, span: span)
+        #expect(w == Loupe.Window(originX: 93, originY: 73, offsetX: 7, offsetY: 7))
+    }
+
+    /// Near an edge the window is pushed back inside rather than clipped, so the magnifier
+    /// keeps its scale and the marker follows the pointer off-centre.
+    @Test func shiftsTheWindowInsideAtTheEdges() {
+        let topLeft = Loupe.window(x: 2, y: 1, width: 400, height: 300, span: span)
+        #expect(topLeft == Loupe.Window(originX: 0, originY: 0, offsetX: 2, offsetY: 1))
+
+        let bottomRight = Loupe.window(x: 399, y: 299, width: 400, height: 300, span: span)
+        #expect(bottomRight == Loupe.Window(originX: 385, originY: 285, offsetX: 14, offsetY: 14))
+    }
+
+    @Test func alwaysProducesAWindowInsideTheImage() {
+        for x in [0, 1, 7, 8, 199, 200, 399] {
+            for y in [0, 1, 7, 8, 299] {
+                let w = Loupe.window(x: x, y: y, width: 400, height: 300, span: span)
+                #expect(w.originX >= 0 && w.originX + span <= 400)
+                #expect(w.originY >= 0 && w.originY + span <= 300)
+                // The marker always lands on the pixel that was asked for.
+                #expect(w.originX + w.offsetX == x)
+                #expect(w.originY + w.offsetY == y)
+                #expect((0..<span).contains(w.offsetX) && (0..<span).contains(w.offsetY))
+            }
+        }
+    }
+
+    /// An image smaller than the loupe can't be shifted anywhere; it must not go negative.
+    @Test func handlesAnImageSmallerThanTheWindow() {
+        let w = Loupe.window(x: 3, y: 2, width: 8, height: 5, span: span)
+        #expect(w == Loupe.Window(originX: 0, originY: 0, offsetX: 3, offsetY: 2))
     }
 }
 

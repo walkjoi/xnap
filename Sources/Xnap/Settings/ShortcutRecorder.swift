@@ -89,14 +89,17 @@ final class ShortcutRecorderView: NSView {
         let modifiers = event.modifierFlags.intersection(Shortcut.relevantModifiers)
         if modifiers.isEmpty && code == kVK_Escape { stopRecording(); return }
         if modifiers.isEmpty && (code == kVK_Delete || code == kVK_ForwardDelete) {
-            onChange?(nil)
             stopRecording()
+            onChange?(nil)
             return
         }
         let candidate = Shortcut(keyCode: code, modifiers: modifiers)
         guard candidate.isValidGlobalShortcut else { NSSound.beep(); return }
-        onChange?(candidate)
+        // Stop first: committing re-registers every hotkey, and while recording has the centre
+        // paused those registrations are deferred and report success regardless, so a
+        // combination taken by another app would never be flagged as a conflict.
         stopRecording()
+        onChange?(candidate)
     }
 
     private func stopRecording() {

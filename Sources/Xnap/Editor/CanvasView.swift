@@ -11,6 +11,8 @@ final class CanvasView: NSView {
     private var drag: DragState = .idle
     private var textEditor: InlineTextEditor?
     private var editingTextID: UUID?
+    /// The last state painted, so a change can be narrowed to what actually moved.
+    private var shown: EditorDocument.State
 
     private enum DragState {
         case idle
@@ -24,14 +26,17 @@ final class CanvasView: NSView {
 
     init(document: EditorDocument) {
         self.document = document
+        shown = document.state
         super.init(frame: CGRect(origin: .zero, size: document.image.pointSize(scale: document.scale)))
-        document.objectWillChange
-            .sink { [weak self] in self?.needsDisplay = true }
-            .store(in: &subscriptions)
         document.$state
-            .map { [scale = document.scale] in $0.image.pointSize(scale: scale) }
+            .sink { [weak self] state in self?.stateChanged(to: state) }
+            .store(in: &subscriptions)
+        document.$selectedID
             .removeDuplicates()
-            .sink { [weak self] size in self?.setFrameSize(size) }
+            .sink { [weak self] id in self?.selectionChanged(to: id) }
+            .store(in: &subscriptions)
+        document.$cropRect
+            .sink { [weak self] rect in self?.cropChanged(to: rect) }
             .store(in: &subscriptions)
         document.$tool
             .removeDuplicates()
@@ -39,6 +44,7 @@ final class CanvasView: NSView {
                 guard let self else { return }
                 self.commitTextEditing()
                 self.window?.invalidateCursorRects(for: self)
+                self.needsDisplay = true
             }
             .store(in: &subscriptions)
     }
@@ -69,6 +75,64 @@ final class CanvasView: NSView {
         default: cursor = .crosshair
         }
         addCursorRect(visibleRect, cursor: cursor)
+    }
+
+    // MARK: Invalidation
+
+    /// `draw` repaints the base image inside the dirty rect, so invalidating the whole view on
+    /// every drag step means resampling the entire visible capture — which for a tall scrolling
+    /// capture is the difference between a smooth drag and a stuttering one. Narrow it to the
+    /// annotations that changed, and fall back to a full repaint whenever that isn't clear-cut.
+    private func stateChanged(to state: EditorDocument.State) {
+        let previous = shown
+        shown = state
+        if previous.image !== state.image {
+            setFrameSize(state.image.pointSize(scale: document.scale))
+            needsDisplay = true
+            return
+        }
+        guard previous.annotations.count == state.annotations.count else { needsDisplay = true; return }
+        var changed: [Annotation] = []
+        for (before, after) in zip(previous.annotations, state.annotations) where before != after {
+            guard before.id == after.id else { needsDisplay = true; return } // reordered
+            changed.append(before)
+            changed.append(after)
+        }
+        invalidate(changed)
+    }
+
+    /// Published properties report the new value while the document still holds the old one.
+    private func selectionChanged(to id: UUID?) {
+        // Only the selection carries handles: repaint the one losing them and the one gaining them.
+        let affected = [document.selectedID, id].compactMap { target in
+            shown.annotations.first { $0.id == target }
+        }
+        invalidate(affected)
+    }
+
+    private func cropChanged(to rect: CGRect?) {
+        // The crop tool dims everything outside its rect, so appearing or disappearing repaints
+        // the image; moving or resizing it only repaints the area the two rects cover.
+        guard let before = document.cropRect, let after = rect else { needsDisplay = true; return }
+        let pad = 28 * pixelsPerScreenPoint
+        invalidate(rect: before.union(after).insetBy(dx: -pad, dy: -pad))
+    }
+
+    private func invalidate(_ annotations: [Annotation]) {
+        var region = CGRect.null
+        for a in annotations {
+            let pad = a.lineWidth * 2 + 14 * pixelsPerScreenPoint // shadow, handles, antialiasing
+            region = region.union(a.bounds.insetBy(dx: -pad, dy: -pad))
+        }
+        invalidate(rect: region)
+    }
+
+    /// `rect` is in image pixels; the view is sized in points.
+    private func invalidate(rect: CGRect) {
+        guard !rect.isNull, !rect.isEmpty, !rect.isInfinite else { return }
+        let s = document.scale
+        setNeedsDisplay(CGRect(x: rect.minX / s, y: rect.minY / s,
+                               width: rect.width / s, height: rect.height / s).integral)
     }
 
     // MARK: Drawing

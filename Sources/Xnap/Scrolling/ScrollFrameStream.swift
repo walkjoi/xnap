@@ -20,6 +20,10 @@ final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unch
     }
 
     /// - Parameter sourceRect: region in the display's local, top-left-origin space, in points.
+    ///
+    /// Pinned to the main actor, together with `stop`, so that `stream` is only ever touched
+    /// from one place. Frames are still delivered on the sample handler queue.
+    @MainActor
     func start(filter: SCContentFilter, sourceRect: CGRect, scale: CGFloat) async throws {
         let config = SCStreamConfiguration()
         config.sourceRect = sourceRect
@@ -38,6 +42,7 @@ final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unch
         self.stream = stream
     }
 
+    @MainActor
     func stop() async {
         guard let stream else { return }
         self.stream = nil
@@ -110,7 +115,7 @@ final class StitchingPipeline: @unchecked Sendable {
     /// Composes the final image after all queued frames have been processed.
     func finish(_ completion: @escaping @MainActor (CGImage?) -> Void) {
         queue.async { [stitcher] in
-            let image = stitcher.makeImage()
+            let image = stitcher.takeImage()
             DispatchQueue.main.async { MainActor.assumeIsolated { completion(image) } }
         }
     }

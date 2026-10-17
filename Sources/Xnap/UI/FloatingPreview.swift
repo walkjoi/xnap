@@ -118,9 +118,16 @@ final class FloatingPreview {
     }
 
     private func copy() {
-        OutputManager.shared.copy(image, scale: scale)
-        Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+        let image = self.image, scale = self.scale
         close(animated: true)
+        Task {
+            do {
+                try await OutputManager.shared.copy(image, scale: scale)
+                Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+            } catch {
+                Toast.show(error.localizedDescription, symbol: "exclamationmark.triangle.fill", isError: true)
+            }
+        }
     }
 
     private func save() {
@@ -129,12 +136,15 @@ final class FloatingPreview {
             close(animated: true)
             return
         }
-        do {
-            let url = try OutputManager.shared.save(image, scale: scale)
-            Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
-            close(animated: true)
-        } catch {
-            Toast.show(error.localizedDescription, symbol: "exclamationmark.triangle.fill", isError: true)
+        let image = self.image, scale = self.scale
+        close(animated: true)
+        Task {
+            do {
+                let url = try await OutputManager.shared.save(image, scale: scale)
+                Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
+            } catch {
+                Toast.show(error.localizedDescription, symbol: "exclamationmark.triangle.fill", isError: true)
+            }
         }
     }
 

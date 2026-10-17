@@ -86,4 +86,42 @@ public struct Bitmap: Sendable, Equatable {
         for part in parts { pixels.append(contentsOf: part.pixels) }
         return Bitmap(width: width, height: pixels.count / max(1, width * 4), pixels: pixels)
     }
+
+    /// Vertically concatenates bitmaps straight into a `CGImage`, releasing each part as it
+    /// is copied.
+    ///
+    /// Going through `stack` and then `makeCGImage` would hold three copies of the result at
+    /// once — the parts, the concatenated bitmap and the `Data` the image is built from. A tall
+    /// scrolling capture is hundreds of megabytes, so the image is assembled in a single buffer
+    /// that the provider takes ownership of, and `parts` is emptied along the way.
+    public static func stackedImage(consuming parts: inout [Bitmap]) -> CGImage? {
+        guard let width = parts.first?.width, width > 0,
+              parts.allSatisfy({ $0.width == width }) else { return nil }
+        let height = parts.reduce(0) { $0 + $1.height }
+        let bytesPerRow = width * 4
+        let total = bytesPerRow * height
+        guard height > 0, let buffer = malloc(total) else { return nil }
+
+        var offset = 0
+        for index in parts.indices {
+            parts[index].pixels.withUnsafeBytes { src in
+                if let base = src.baseAddress { memcpy(buffer + offset, base, src.count) }
+            }
+            offset += parts[index].pixels.count
+            parts[index] = Bitmap(width: 0, height: 0) // free this part now, not at the end
+        }
+        parts.removeAll()
+
+        // The provider owns `buffer` from here on, including if the image fails to build.
+        guard let provider = CGDataProvider(dataInfo: buffer, data: buffer, size: total,
+                                            releaseData: { pointer, _, _ in free(pointer) }) else {
+            free(buffer)
+            return nil
+        }
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: bytesPerRow, space: Bitmap.colorSpace,
+                       bitmapInfo: CGBitmapInfo(rawValue: Bitmap.bitmapInfo),
+                       provider: provider, decode: nil, shouldInterpolate: false,
+                       intent: .defaultIntent)
+    }
 }

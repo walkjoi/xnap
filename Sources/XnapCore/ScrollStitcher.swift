@@ -175,8 +175,14 @@ public final class ScrollStitcher {
         return Bitmap.stack(slices + (footer.map { [$0] } ?? []))
     }
 
-    public func makeImage() -> CGImage? {
-        makeBitmap()?.makeCGImage()
+    /// The finished image. **Consumes** the stitcher: the appended slices are handed to the
+    /// image one at a time and released as they go, so composing a tall capture needs room
+    /// for one copy of the result rather than three. Call it once, at the end of a session.
+    public func takeImage() -> CGImage? {
+        guard !slices.isEmpty else { return nil }
+        if let footer { slices.append(footer) }
+        footer = nil
+        return Bitmap.stackedImage(consuming: &slices)
     }
 
     /// A small nearest-neighbour preview of the bottom of the stitched result.

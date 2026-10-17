@@ -6,11 +6,17 @@ import SwiftUI
 enum Toast {
     private static var panel: NSPanel?
     private static var hideTask: Task<Void, Never>?
+    /// Identifies the toast currently owning the shared panel. Cancelling `hideTask` does not
+    /// stop a fade-out that already started, and its completion would otherwise order the
+    /// panel out from under whichever toast replaced it.
+    private static var generation = 0
 
     static func show(_ message: String, symbol: String = "checkmark.circle.fill", isError: Bool = false,
                      duration: Duration = .milliseconds(1800)) {
         let panel = self.panel ?? makePanel()
         self.panel = panel
+        generation += 1
+        let token = generation
         let host = PanelHostingView(rootView: ToastView(message: message, symbol: symbol, isError: isError))
         panel.contentView = host
         let size = host.fittingSize
@@ -24,9 +30,13 @@ enum Toast {
         hideTask?.cancel()
         hideTask = Task { @MainActor in
             try? await Task.sleep(for: duration)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, token == generation else { return }
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.25; panel.animator().alphaValue = 0 },
-                                                 completionHandler: { panel.orderOut(nil) })
+                                                 completionHandler: {
+                MainActor.assumeIsolated {
+                    if token == generation { panel.orderOut(nil) }
+                }
+            })
         }
     }
 

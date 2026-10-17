@@ -14,7 +14,11 @@ final class ScrollCaptureSession {
     private static let escapeHotKey: UInt32 = 900
     private static let returnHotKey: UInt32 = 901
 
-    private let selection: CaptureSelection
+    /// Only the geometry of the selection is kept. Holding the `CaptureSelection` itself would
+    /// pin the whole display snapshot it was picked from for the entire session.
+    private let screen: NSScreen
+    private let region: CGRect
+    private let scale: CGFloat
     private let completion: (CGImage?) -> Void
     private let model: ScrollHUDModel
     private let hud: ScrollHUDPanel
@@ -40,12 +44,14 @@ final class ScrollCaptureSession {
 
     private init(selection: CaptureSelection, destination: CaptureDestination,
                  completion: @escaping (CGImage?) -> Void) {
-        self.selection = selection
+        screen = selection.screen
+        region = selection.rect
+        scale = selection.scale
         self.completion = completion
         model = ScrollHUDModel(savesToFile: destination == .file)
-        model.scale = selection.scale
+        model.scale = scale
         hud = ScrollHUDPanel(model: model)
-        highlight = RegionHighlightWindow(screen: selection.screen, region: selection.rect)
+        highlight = RegionHighlightWindow(screen: screen, region: region)
 
         pipeline = StitchingPipeline(maxHeight: Preferences.shared.scrollMaxHeight) { [weak self] progress in
             self?.handle(progress)
@@ -67,7 +73,7 @@ final class ScrollCaptureSession {
 
     private func begin() async {
         highlight.orderFrontRegardless()
-        hud.position(near: selection.screen.globalRect(fromLocal: selection.rect), on: selection.screen)
+        hud.position(near: screen.globalRect(fromLocal: region), on: screen)
         hud.orderFrontRegardless()
 
         HotKeyCenter.shared.register(id: Self.escapeHotKey, shortcut: Shortcut(keyCode: kVK_Escape, modifiers: [])) {
@@ -79,12 +85,20 @@ final class ScrollCaptureSession {
 
         do {
             let content = try await ScreenCapture.shareableContent()
-            guard let display = content.displays.first(where: { $0.displayID == selection.screen.displayID }) else {
+            guard let display = content.displays.first(where: { $0.displayID == screen.displayID }) else {
                 throw ScreenCapture.CaptureError.noDisplay
             }
+            // ⎋ and ⏎ are live from the moment the hotkeys above are registered, so the session
+            // can already be over by the time the capture is ready to start.
+            guard !isOver else { return }
             try await stream.start(filter: ScreenCapture.filter(for: display, in: content),
-                                   sourceRect: selection.rect, scale: selection.scale)
+                                   sourceRect: region, scale: scale)
+            // Ended while the stream was starting: `cancel` found nothing to stop, so stop it
+            // here or it would keep capturing with no session left to own it.
+            if isOver { await stream.stop() }
         } catch {
+            guard !isOver else { return }
+            isOver = true
             Toast.show("Scrolling capture failed: \(error.localizedDescription)",
                        symbol: "exclamationmark.triangle.fill", isError: true)
             tearDown()
@@ -134,7 +148,7 @@ final class ScrollCaptureSession {
             model.say("Auto-Scroll needs Accessibility access: System Settings › Privacy & Security › Accessibility.", .warning)
             return
         }
-        let region = selection.screen.quartzRect(fromLocal: selection.rect)
+        let region = screen.quartzRect(fromLocal: self.region)
         let pointer = CGEvent(source: nil)?.location ?? .zero
         if !region.contains(pointer) {
             CGWarpMouseCursorPosition(CGPoint(x: region.midX, y: region.midY))
@@ -154,7 +168,7 @@ final class ScrollCaptureSession {
 
     private func runAutoScroll(in region: CGRect) async {
         let speed = Preferences.shared.autoScrollSpeed
-        var step = max(40, Int(selection.rect.height * speed.stepFraction))
+        var step = max(40, Int(self.region.height * speed.stepFraction))
         var direction: Int32 = -1
         var stalls = 0
         var calibrated = false

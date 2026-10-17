@@ -87,8 +87,8 @@ enum WindowList {
             guard (info[kCGWindowLayer as String] as? Int) == 0,
                   (info[kCGWindowOwnerPID as String] as? Int32) != pid,
                   (info[kCGWindowAlpha as String] as? Double ?? 1) > 0.05,
-                  let bounds = info[kCGWindowBounds as String],
-                  let rect = CGRect(dictionaryRepresentation: bounds as! CFDictionary),
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   rect.width >= 40, rect.height >= 40 else { return nil }
             return rect
         }

@@ -137,23 +137,33 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     // MARK: Commands
 
-    @objc func copy(_ sender: Any?) {
+    @objc func copy(_ sender: Any?) { Task { await copyToClipboard() } }
+
+    /// Flattening has to stay on the main thread (it draws text through AppKit), but the
+    /// encode behind `copy` does not, so a tall capture no longer freezes the editor.
+    private func copyToClipboard() async {
         canvas.commitTextEditing()
         guard let image = editorDocument.flattened() else { return }
-        OutputManager.shared.copy(image, scale: editorDocument.scale)
-        editorDocument.isDirty = false
-        Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+        do {
+            try await OutputManager.shared.copy(image, scale: editorDocument.scale)
+            editorDocument.isDirty = false
+            Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+        } catch {
+            presentError(error)
+        }
     }
 
     @objc func saveDocument(_ sender: Any?) {
         canvas.commitTextEditing()
         guard let image = editorDocument.flattened() else { return }
-        do {
-            let url = try OutputManager.shared.save(image, scale: editorDocument.scale)
-            editorDocument.isDirty = false
-            Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
-        } catch {
-            presentError(error)
+        Task {
+            do {
+                let url = try await OutputManager.shared.save(image, scale: editorDocument.scale)
+                editorDocument.isDirty = false
+                Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
+            } catch {
+                presentError(error)
+            }
         }
     }
 
@@ -167,12 +177,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let url = panel.url, let self else { return }
-            do {
-                try OutputManager.shared.write(image, scale: self.editorDocument.scale, to: url)
-                self.editorDocument.isDirty = false
-                Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
-            } catch {
-                self.presentError(error)
+            Task {
+                do {
+                    try await OutputManager.shared.write(image, scale: self.editorDocument.scale, to: url)
+                    self.editorDocument.isDirty = false
+                    Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
+                } catch {
+                    self.presentError(error)
+                }
             }
         }
     }
@@ -218,8 +230,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                self.copy(nil)
-                sender.close()
+                // Close only once the clipboard actually holds the image.
+                Task {
+                    await self.copyToClipboard()
+                    sender.close()
+                }
             case .alertThirdButtonReturn:
                 self.editorDocument.isDirty = false
                 sender.close()

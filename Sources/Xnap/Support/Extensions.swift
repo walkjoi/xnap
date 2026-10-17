@@ -36,6 +36,26 @@ extension CGImage {
     func pointSize(scale: CGFloat) -> CGSize {
         CGSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
     }
+
+    /// A crop that owns its pixels, in the same top-left-origin space as `cropping(to:)`.
+    ///
+    /// `cropping(to:)` only returns a window onto the original: it keeps the parent's data
+    /// provider and row stride alive. Cropping a small area out of a display snapshot would
+    /// therefore pin the whole screen's pixels — tens of megabytes — for as long as the result
+    /// lives, and captures are long-lived (clipboard, editor undo states, pinned windows).
+    /// Note that `copy()` does not detach either; the pixels have to be redrawn.
+    func croppedCopy(to rect: CGRect) -> CGImage? {
+        let clamped = rect.integral.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        guard clamped.width >= 1, clamped.height >= 1, let view = cropping(to: clamped) else { return nil }
+        let space = colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let ctx = CGContext(data: nil, width: view.width, height: view.height,
+                                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                      | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        ctx.interpolationQuality = .none
+        ctx.draw(view, in: CGRect(x: 0, y: 0, width: view.width, height: view.height))
+        return ctx.makeImage()
+    }
 }
 
 extension CGRect {

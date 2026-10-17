@@ -15,7 +15,8 @@ struct CaptureSelection {
                width: rect.width * scale, height: rect.height * scale).integral
     }
 
-    var croppedImage: CGImage? { snapshot.image.cropping(to: pixelRect) }
+    /// Detached from the display snapshot on purpose — see `croppedCopy(to:)`.
+    var croppedImage: CGImage? { snapshot.image.croppedCopy(to: pixelRect) }
 }
 
 /// Full-screen "freeze frame" overlay for picking an area or a window.
@@ -119,8 +120,12 @@ private final class SelectionView: NSView {
     private var finished = false
 
     private let imageLayer = CALayer()
-    private let dimLayer = CAShapeLayer()
-    private let borderLayer = CAShapeLayer()
+    /// The dim is four plain layers tiled around the selection, and the border is a plain
+    /// layer's border, rather than display-sized `CAShapeLayer`s. Changing a shape layer's
+    /// path makes the render server re-rasterize the whole layer, and these are updated on
+    /// every pointer move — which on a 5K display means re-rasterizing 5120×2880 each time.
+    private let dimBands = [CALayer(), CALayer(), CALayer(), CALayer()]
+    private let borderLayer = CALayer()
     private let crossH = CALayer()
     private let crossV = CALayer()
     private let sizeLabel: PillLabel
@@ -165,7 +170,6 @@ private final class SelectionView: NSView {
 
     private func buildLayers() {
         guard let root = layer else { return }
-        let scale = snapshot.scale
         root.backgroundColor = NSColor.black.cgColor
 
         imageLayer.frame = bounds
@@ -173,16 +177,14 @@ private final class SelectionView: NSView {
         imageLayer.contentsGravity = .resize
         root.addSublayer(imageLayer)
 
-        dimLayer.frame = bounds
-        dimLayer.contentsScale = scale
-        dimLayer.fillRule = .evenOdd
-        dimLayer.fillColor = NSColor.black.withAlphaComponent(0.4).cgColor
-        root.addSublayer(dimLayer)
+        let dimColor = NSColor.black.withAlphaComponent(0.4).cgColor
+        for band in dimBands {
+            band.backgroundColor = dimColor
+            root.addSublayer(band)
+        }
 
-        borderLayer.frame = bounds
-        borderLayer.fillColor = nil
-        borderLayer.lineWidth = 1.5
-        borderLayer.contentsScale = scale
+        borderLayer.borderWidth = 1.5
+        borderLayer.isHidden = true
         root.addSublayer(borderLayer)
 
         for line in [crossH, crossV] {
@@ -335,20 +337,29 @@ private final class SelectionView: NSView {
 
     // MARK: Drawing
 
+    /// Tiles the dim around `hole` (in layer coordinates). An empty hole dims everything.
+    private func setDim(hole: CGRect) {
+        let frames = [
+            CGRect(x: 0, y: hole.maxY, width: bounds.width, height: max(0, bounds.height - hole.maxY)),
+            CGRect(x: 0, y: 0, width: bounds.width, height: max(0, hole.minY)),
+            CGRect(x: 0, y: hole.minY, width: max(0, hole.minX), height: hole.height),
+            CGRect(x: hole.maxX, y: hole.minY, width: max(0, bounds.width - hole.maxX), height: hole.height),
+        ]
+        for (band, frame) in zip(dimBands, frames) { band.frame = frame }
+    }
+
     private func refresh() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
 
         let active = selection ?? (isDragging ? nil : hoveredWindow)?.intersection(screenBounds)
-        let dim = CGMutablePath()
-        dim.addRect(bounds)
-        if let active { dim.addRect(toLayer(active)) }
-        dimLayer.path = dim
+        setDim(hole: active.map(toLayer) ?? .zero)
 
         if let active {
-            borderLayer.path = CGPath(rect: toLayer(active).insetBy(dx: -0.75, dy: -0.75), transform: nil)
-            borderLayer.strokeColor = (selection != nil ? NSColor.white : NSColor.controlAccentColor).cgColor
+            borderLayer.isHidden = false
+            borderLayer.frame = toLayer(active).insetBy(dx: -1.5, dy: -1.5)
+            borderLayer.borderColor = (selection != nil ? NSColor.white : NSColor.controlAccentColor).cgColor
             let text = "\(Int(active.width.rounded())) × \(Int(active.height.rounded()))"
             let size = sizeLabel.set(text, fontSize: 12)
             var origin = CGPoint(x: active.minX, y: active.maxY + 8)
@@ -357,7 +368,7 @@ private final class SelectionView: NSView {
             sizeLabel.frame = toLayer(CGRect(origin: origin, size: size))
             sizeLabel.isHidden = false
         } else {
-            borderLayer.path = nil
+            borderLayer.isHidden = true
             sizeLabel.isHidden = true
         }
 
@@ -379,10 +390,20 @@ private final class SelectionView: NSView {
 
     private func updateLoupe(at mouse: CGPoint) {
         let scale = snapshot.scale
-        let px = Int(mouse.x * scale), py = Int(mouse.y * scale)
-        let half = Self.loupePixels / 2
-        let crop = CGRect(x: px - half, y: py - half, width: Self.loupePixels, height: Self.loupePixels)
-        loupeImage.contents = snapshot.image.cropping(to: crop)
+        let image = snapshot.image
+        let px = min(max(0, Int(mouse.x * scale)), image.width - 1)
+        let py = min(max(0, Int(mouse.y * scale)), image.height - 1)
+        let span = Self.loupePixels
+        let window = Loupe.window(x: px, y: py, width: image.width, height: image.height, span: span)
+        loupeImage.contents = image.cropping(to: CGRect(x: window.originX, y: window.originY,
+                                                        width: span, height: span))
+
+        // The centre cell marks the pixel actually under the pointer, which is off-centre
+        // once the window has been pushed back inside the image near an edge.
+        let cell = Self.loupeSize / CGFloat(span)
+        loupeCenter.frame = CGRect(x: CGFloat(window.offsetX) * cell,
+                                   y: Self.loupeSize - CGFloat(window.offsetY + 1) * cell,
+                                   width: cell, height: cell)
 
         let size = Self.loupeSize
         var origin = CGPoint(x: mouse.x + 24, y: mouse.y + 24)
@@ -392,7 +413,7 @@ private final class SelectionView: NSView {
         loupe.frame = toLayer(loupeRect)
         loupe.isHidden = false
 
-        loupeColorHex = Self.hexColor(of: snapshot.image, x: px, y: py) ?? ""
+        loupeColorHex = hexColor(of: snapshot.image, x: px, y: py) ?? ""
         let info = "\(Int(mouse.x)), \(Int(mouse.y))  \(loupeColorHex)"
         let infoSize = loupeInfo.set(info, fontSize: 11)
         loupeInfo.frame = toLayer(CGRect(x: loupeRect.midX - infoSize.width / 2, y: loupeRect.maxY + 6,
@@ -400,18 +421,44 @@ private final class SelectionView: NSView {
         loupeInfo.isHidden = false
     }
 
-    private static func hexColor(of image: CGImage, x: Int, y: Int) -> String? {
+    /// One reused 1×1 context, because the colour under the pointer is sampled on every
+    /// mouse-moved event and building a `CGContext` per event is pure waste.
+    private lazy var probe: CGContext? = CGContext(
+        data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+
+    private func hexColor(of image: CGImage, x: Int, y: Int) -> String? {
         guard x >= 0, y >= 0, x < image.width, y < image.height,
+              let probe, let data = probe.data,
               let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return nil }
-        var rgba = [UInt8](repeating: 0, count: 4)
-        let ok = rgba.withUnsafeMutableBytes { raw -> Bool in
-            guard let ctx = CGContext(data: raw.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            ctx.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-            return true
-        }
-        return ok ? String(format: "#%02X%02X%02X", rgba[0], rgba[1], rgba[2]) : nil
+        probe.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let rgba = data.assumingMemoryBound(to: UInt8.self)
+        return String(format: "#%02X%02X%02X", rgba[0], rgba[1], rgba[2])
+    }
+}
+
+/// Geometry of the magnifier's sample window.
+enum Loupe {
+    struct Window: Equatable {
+        /// Top-left of the sampled square, in image pixels.
+        var originX: Int, originY: Int
+        /// Where the sampled pixel sits inside that square.
+        var offsetX: Int, offsetY: Int
+    }
+
+    /// The `span`×`span` pixel square to magnify around (`x`, `y`), shifted to stay fully
+    /// inside the image.
+    ///
+    /// A window that hangs off the edge comes back from `cropping(to:)` smaller than asked
+    /// for and then gets stretched to fill the loupe, which both changes the magnification
+    /// and moves the centre marker off the pixel being sampled. Shifting instead of shrinking
+    /// keeps the scale honest.
+    static func window(x: Int, y: Int, width: Int, height: Int, span: Int) -> Window {
+        let originX = min(max(0, x - span / 2), max(0, width - span))
+        let originY = min(max(0, y - span / 2), max(0, height - span))
+        return Window(originX: originX, originY: originY,
+                      offsetX: x - originX, offsetY: y - originY)
     }
 }
 

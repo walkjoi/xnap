@@ -57,6 +57,12 @@ final class EditorDocument: ObservableObject {
         }
     }
 
+    deinit {
+        // Block-based observations outlive the object they capture unless they are removed,
+        // so every editor window would otherwise leave three of them registered for good.
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
+
     // MARK: Style for new annotations
 
     var lineWidth: CGFloat { strokeSize.lineWidth * scale }
@@ -102,7 +108,8 @@ final class EditorDocument: ObservableObject {
     func applyCrop() {
         guard let rect = cropRect?.integral.intersection(CGRect(origin: .zero, size: imageSize)),
               rect.width >= 2, rect.height >= 2,
-              let cropped = state.image.cropping(to: rect) else { return }
+              // A shared crop would keep the uncropped pixels alive in every later undo state.
+              let cropped = state.image.croppedCopy(to: rect) else { return }
         let offset = CGSize(width: -rect.minX, height: -rect.minY)
         perform("Crop") { state in
             state.image = cropped

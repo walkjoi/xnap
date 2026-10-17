@@ -54,10 +54,12 @@ final class CaptureCoordinator {
                 Toast.show("Select a larger area to scroll-capture", symbol: "arrow.up.and.down", isError: true)
                 return
             }
+            // Capture just the scale: holding `selection` would keep the display snapshot
+            // alive for the whole session.
+            let scale = selection.scale
             ScrollCaptureSession.start(selection: selection, destination: destination) { [weak self] image in
-                guard let self else { return }
-                guard let image else { return }
-                self.deliver(image, scale: selection.scale, to: destination)
+                guard let self, let image else { return }
+                self.deliver(image, scale: scale, to: destination)
             }
         }
     }
@@ -90,24 +92,28 @@ final class CaptureCoordinator {
     // MARK: Delivery
 
     func deliver(_ image: CGImage, scale: CGFloat, to destination: CaptureDestination) {
-        let savedURL: URL?
-        do {
-            savedURL = try OutputManager.shared.deliver(image, scale: scale, to: destination)
-        } catch {
-            report(error)
-            return
-        }
+        // The shutter is the immediate feedback; encoding runs off the main thread, so the
+        // menu bar stays responsive even while a tall scrolling capture is being written.
         CaptureSound.play()
-        switch prefs.afterCapture {
-        case .showPreview:
-            FloatingPreview.show(image: image, scale: scale, savedURL: savedURL)
-        case .openEditor:
-            EditorWindowController.open(image: image, scale: scale)
-        case .nothing:
-            if let savedURL {
-                Toast.show("Saved “\(savedURL.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
-            } else {
-                Toast.show("Copied to clipboard", symbol: "doc.on.clipboard.fill")
+        Task {
+            let savedURL: URL?
+            do {
+                savedURL = try await OutputManager.shared.deliver(image, scale: scale, to: destination)
+            } catch {
+                report(error)
+                return
+            }
+            switch prefs.afterCapture {
+            case .showPreview:
+                FloatingPreview.show(image: image, scale: scale, savedURL: savedURL)
+            case .openEditor:
+                EditorWindowController.open(image: image, scale: scale)
+            case .nothing:
+                if let savedURL {
+                    Toast.show("Saved “\(savedURL.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
+                } else {
+                    Toast.show("Copied to clipboard", symbol: "doc.on.clipboard.fill")
+                }
             }
         }
     }

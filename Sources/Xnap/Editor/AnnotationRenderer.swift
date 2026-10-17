@@ -181,7 +181,17 @@ enum AnnotationRenderer {
 final class Pixelator {
     let image: CGImage
     let blockSize: CGFloat
-    private var cache: [String: CGImage] = [:]
+    /// Keyed by the snapped region, which is always whole pixels. A struct of four integers
+    /// hashes without allocating, unlike the interpolated string this used to build on every
+    /// single draw of every mosaic.
+    private struct Region: Hashable {
+        let x: Int, y: Int, width: Int, height: Int
+        init(_ r: CGRect) {
+            x = Int(r.minX); y = Int(r.minY); width = Int(r.width); height = Int(r.height)
+        }
+    }
+
+    private var cache: [Region: CGImage] = [:]
 
     init(image: CGImage, scale: CGFloat) {
         self.image = image
@@ -198,7 +208,7 @@ final class Pixelator {
                           height: ceil(rect.maxY / b) * b - snapped.minY)
             .intersection(CGRect(origin: .zero, size: image.size))
         guard full.width >= 1, full.height >= 1 else { return nil }
-        let key = "\(full.minX),\(full.minY),\(full.width),\(full.height)"
+        let key = Region(full)
         if let cached = cache[key] { return (cached, full) }
         guard let crop = image.cropping(to: full) else { return nil }
         let w = max(1, Int(ceil(full.width / b))), h = max(1, Int(ceil(full.height / b)))

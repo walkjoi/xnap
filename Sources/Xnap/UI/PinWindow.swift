@@ -70,8 +70,15 @@ final class PinWindow: NSPanel, NSWindowDelegate {
     }
 
     @objc private func copyImage() {
-        OutputManager.shared.copy(image, scale: scale)
-        Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+        let image = self.image, scale = self.scale
+        Task {
+            do {
+                try await OutputManager.shared.copy(image, scale: scale)
+                Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+            } catch {
+                Toast.show(error.localizedDescription, symbol: "exclamationmark.triangle.fill", isError: true)
+            }
+        }
     }
 
     @objc private func annotate() {
