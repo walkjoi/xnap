@@ -178,7 +178,12 @@ final class EditorDocument: ObservableObject {
 
     /// Selecting an annotation shows its color and size in the toolbar.
     private func syncStyleFromSelection() {
-        guard let a = selected, !a.shape.isPixelate else { return }
+        if let a = selected { showStyle(of: a) }
+    }
+
+    /// Puts `a`'s color and size in the toolbar without restyling anything.
+    func showStyle(of a: Annotation) {
+        guard !a.shape.isPixelate else { return }
         syncingStyle = true
         defer { syncingStyle = false }
         color = a.color

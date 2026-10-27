@@ -217,6 +217,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { editorDocument.undoManager }
 
+    func windowDidBecomeMain(_ notification: Notification) {
+        ColorPanelBridge.shared.document = editorDocument
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         canvas.commitTextEditing()
         guard editorDocument.isDirty, !editorDocument.annotations.isEmpty else { return true }

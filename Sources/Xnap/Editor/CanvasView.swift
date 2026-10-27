@@ -38,6 +38,14 @@ final class CanvasView: NSView {
         document.$cropRect
             .sink { [weak self] rect in self?.cropChanged(to: rect) }
             .store(in: &subscriptions)
+        document.$color
+            .sink { [weak self] color in self?.textEditor?.restyle(color: color.nsColor) }
+            .store(in: &subscriptions)
+        document.$strokeSize
+            .sink { [weak self] size in
+                self?.textEditor?.restyle(font: .systemFont(ofSize: size.fontSize, weight: .semibold))
+            }
+            .store(in: &subscriptions)
         document.$tool
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -484,6 +492,8 @@ final class CanvasView: NSView {
         let s = document.scale
         editingTextID = isNew ? nil : annotation.id
         document.selectedID = nil
+        // While typing, the toolbar shows the text's color and size, and changes them.
+        document.showStyle(of: annotation)
 
         let font = NSFont.systemFont(ofSize: annotation.fontSize / s, weight: .semibold)
         let editor = InlineTextEditor(origin: CGPoint(x: origin.x / s, y: origin.y / s), font: font,
@@ -517,12 +527,16 @@ final class CanvasView: NSView {
         let isEmpty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         var edited = original
         edited.shape = .text(origin, text)
+        edited.color = document.color
+        edited.fontSize = document.fontSize
+        // Keep the text selected, like a new shape, so picking a color or size next restyles it.
         if isNew {
-            if !isEmpty { document.add(edited, select: false) }
+            if !isEmpty { document.add(edited) }
         } else if isEmpty {
             document.remove(id: original.id)
-        } else if edited != original {
-            document.replace(edited, actionName: "Edit Text")
+        } else {
+            if edited != original { document.replace(edited, actionName: "Edit Text") }
+            document.selectedID = original.id
         }
         needsDisplay = true
     }
@@ -545,9 +559,8 @@ final class InlineTextEditor: NSTextView {
         super.init(frame: CGRect(origin: origin, size: CGSize(width: 24, height: font.pointSize * 1.3)),
                    textContainer: container)
         self.font = font
-        textColor = color
-        typingAttributes = [.font: font, .foregroundColor: color]
-        insertionPointColor = color
+        typingAttributes = [.font: font]
+        restyle(color: color)
         isRichText = false
         allowsUndo = false
         drawsBackground = false
@@ -569,6 +582,23 @@ final class InlineTextEditor: NSTextView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Restyles the text in place, so a color or size picked while typing shows right away.
+    func restyle(color: NSColor) {
+        textColor = color
+        typingAttributes[.foregroundColor] = color
+        insertionPointColor = color
+    }
+
+    func restyle(font: NSFont) {
+        self.font = font
+        typingAttributes[.font] = font
+        fitToText()
+    }
+
+    /// The color panel also messages the first responder, but the document's color drives this
+    /// view; recoloring here would only last until the text is committed.
+    override func changeColor(_ sender: Any?) {}
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76

@@ -127,6 +127,86 @@ struct EditorTests {
         #expect(doc.annotations[0].color == .green)
     }
 
+    /// Picking a color or size while typing, or right after, has to restyle the text being written.
+    @Test func restylingTextWhileTypingAndAfter() throws {
+        _ = NSApplication.shared
+        let doc = EditorDocument(image: sampleImage(), scale: 2)
+        let canvas = CanvasView(document: doc)
+        let window = NSWindow(contentRect: canvas.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = canvas
+
+        /// Clicks at a point in image pixels.
+        func click(_ p: CGPoint) throws {
+            let location = canvas.convert(CGPoint(x: p.x / doc.scale, y: p.y / doc.scale), to: nil)
+            canvas.mouseDown(with: try #require(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: location, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+        }
+        func editor() throws -> InlineTextEditor { try #require(canvas.subviews.last as? InlineTextEditor) }
+        func fontSize(_ size: StrokeSize) -> CGFloat { size.fontSize * doc.scale }
+
+        doc.tool = .text
+        doc.color = .red
+        doc.strokeSize = .medium
+        try click(CGPoint(x: 200, y: 100))
+        try editor().string = "Hello"
+        doc.color = .blue
+        doc.strokeSize = .large
+        #expect(try editor().textColor == RGBA.blue.nsColor)
+        #expect(try editor().font?.pointSize == StrokeSize.large.fontSize)
+        canvas.commitTextEditing()
+        #expect(doc.annotations.map(\.color) == [.blue])
+        #expect(doc.annotations.map(\.fontSize) == [fontSize(.large)])
+        #expect(doc.selectedID == doc.annotations[0].id)
+
+        doc.color = .green
+        doc.strokeSize = .huge
+        #expect(doc.annotations.map(\.color) == [.green])
+        #expect(doc.annotations.map(\.fontSize) == [fontSize(.huge)])
+
+        // Reopening it shows its own style, not whatever the toolbar held, and leaves it alone.
+        doc.selectedID = nil
+        doc.color = .yellow
+        doc.strokeSize = .small
+        try click(CGPoint(x: 210, y: 115))
+        #expect(doc.color == .green)
+        #expect(doc.strokeSize == .huge)
+        doc.color = .purple
+        canvas.commitTextEditing()
+        #expect(doc.annotations.map(\.color) == [.purple])
+        #expect(doc.annotations.map(\.fontSize) == [fontSize(.huge)])
+        #expect(doc.selectedID == doc.annotations[0].id)
+    }
+
+    /// The color panel stays open while new captures open their own editors, so it has to restyle
+    /// the selection in the editor in front, not in the one that first opened it.
+    @Test func colorPanelFollowsTheEditorInFront() throws {
+        _ = NSApplication.shared
+        EditorWindowController.open(image: sampleImage(), scale: 2, title: "First")
+        EditorWindowController.open(image: sampleImage(), scale: 2, title: "Second")
+        let editors = NSApp.windows.compactMap { $0.windowController as? EditorWindowController }
+        defer {
+            editors.forEach { $0.window?.close() }
+            NSColorPanel.shared.orderOut(nil)
+        }
+        let first = try #require(editors.first { $0.window?.title == "First" })
+        let second = try #require(editors.first { $0.window?.title == "Second" })
+
+        ColorPanelBridge.shared.open(for: first.editorDocument)
+        second.windowDidBecomeMain(Notification(name: NSWindow.didBecomeMainNotification, object: second.window))
+        let doc = second.editorDocument
+        doc.add(doc.newAnnotation(.rectangle(CGRect(x: 40, y: 40, width: 120, height: 80))))
+
+        let panel = NSColorPanel.shared
+        panel.color = RGBA.green.nsColor
+        // What the panel does when the user picks a color (it has no getters for target/action).
+        NSApp.sendAction(Selector(("colorChanged:")), to: ColorPanelBridge.shared, from: panel)
+        #expect(doc.annotations[0].color == RGBA(panel.color))
+        #expect(doc.annotations[0].color != .red)
+        #expect(first.editorDocument.color == .red)
+    }
+
     @Test func pixelationDestroysDetail() throws {
         let image = sampleImage()
         let doc = EditorDocument(image: image, scale: 2)

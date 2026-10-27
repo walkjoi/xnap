@@ -85,8 +85,7 @@ struct EditorToolbar: View {
     }
 
     private func openColorPanel() {
-        let doc = document
-        ColorPanelBridge.shared.open(with: doc.color.nsColor) { [weak doc] in doc?.color = RGBA($0) }
+        ColorPanelBridge.shared.open(for: document)
     }
 
     private var colorRow: some View {
@@ -117,24 +116,25 @@ struct EditorToolbar: View {
     }
 }
 
-/// Routes the shared color panel to whichever editor opened it last.
+/// Routes the shared color panel to the editor in front. The panel stays open while new captures
+/// open their own editors, so it follows whichever editor became main last, not the one that opened it.
 @MainActor
 final class ColorPanelBridge: NSObject {
     static let shared = ColorPanelBridge()
-    private var onChange: ((NSColor) -> Void)?
+    weak var document: EditorDocument?
 
-    func open(with color: NSColor, onChange: @escaping (NSColor) -> Void) {
+    func open(for document: EditorDocument) {
         let panel = NSColorPanel.shared
-        self.onChange = nil
+        self.document = nil
         panel.showsAlpha = false
-        panel.color = color
-        self.onChange = onChange
+        panel.color = document.color.nsColor
+        self.document = document
         panel.setTarget(self)
         panel.setAction(#selector(colorChanged(_:)))
         panel.orderFront(nil)
     }
 
-    @objc private func colorChanged(_ sender: NSColorPanel) { onChange?(sender.color) }
+    @objc private func colorChanged(_ sender: NSColorPanel) { document?.color = RGBA(sender.color) }
 }
 
 private struct ToolButton: View {
