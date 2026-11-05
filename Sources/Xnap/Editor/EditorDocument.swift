@@ -15,6 +15,7 @@ final class EditorDocument: ObservableObject {
     @Published private(set) var state: State {
         didSet {
             if state.image !== oldValue.image { pixelator = Pixelator(image: state.image, scale: scale) }
+            revision += 1
             isDirty = true
         }
     }
@@ -30,6 +31,9 @@ final class EditorDocument: ObservableObject {
     @Published private(set) var canRedo = false
     /// True when there are edits that haven't been copied or saved.
     @Published var isDirty = false
+    /// Goes up with every change to `state`, so a copy or save can tell whether the document
+    /// changed while it ran. See `markClean(asOf:)`.
+    private(set) var revision = 0
 
     /// Image pixels per point (2 for Retina captures).
     let scale: CGFloat
@@ -148,6 +152,13 @@ final class EditorDocument: ObservableObject {
 
     func flattened() -> CGImage? {
         AnnotationRenderer.render(image: state.image, annotations: state.annotations, pixelator: pixelator)
+    }
+
+    /// Marks the document clean once a copy or save of it has finished. `revision` is the value
+    /// read before flattening: copy and save encode off the main thread, so editing can go on
+    /// while they run, and edits made in that time aren't in the output, so they keep it dirty.
+    func markClean(asOf revision: Int) {
+        if revision == self.revision { isDirty = false }
     }
 
     // MARK: Undo plumbing

@@ -143,10 +143,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     /// encode behind `copy` does not, so a tall capture no longer freezes the editor.
     private func copyToClipboard() async {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let image = editorDocument.flattened() else { return }
         do {
             try await OutputManager.shared.copy(image, scale: editorDocument.scale)
-            editorDocument.isDirty = false
+            editorDocument.markClean(asOf: revision)
             Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
         } catch {
             presentError(error)
@@ -155,11 +156,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func saveDocument(_ sender: Any?) {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let image = editorDocument.flattened() else { return }
         Task {
             do {
                 let url = try await OutputManager.shared.save(image, scale: editorDocument.scale)
-                editorDocument.isDirty = false
+                editorDocument.markClean(asOf: revision)
                 Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
             } catch {
                 presentError(error)
@@ -169,6 +171,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func saveDocumentAs(_ sender: Any?) {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let window, let image = editorDocument.flattened() else { return }
         let panel = NSSavePanel()
         let format = Preferences.shared.imageFormat
@@ -180,7 +183,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             Task {
                 do {
                     try await OutputManager.shared.write(image, scale: self.editorDocument.scale, to: url)
-                    self.editorDocument.isDirty = false
+                    self.editorDocument.markClean(asOf: revision)
                     Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
                 } catch {
                     self.presentError(error)
@@ -234,10 +237,11 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                // Close only once the clipboard actually holds the image.
+                // Close only once the clipboard holds the image with every edit in it. A failed
+                // copy, or edits made while it ran, leave the document dirty and the window open.
                 Task {
                     await self.copyToClipboard()
-                    sender.close()
+                    if !self.editorDocument.isDirty { sender.close() }
                 }
             case .alertThirdButtonReturn:
                 self.editorDocument.isDirty = false

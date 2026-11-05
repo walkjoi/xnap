@@ -116,6 +116,20 @@ struct EditorTests {
         #expect(doc.annotations.isEmpty)
     }
 
+    /// Copy and save encode off the main thread, so editing can go on while they run. Edits made
+    /// in that time aren't in the output, so finishing must not mark them as saved.
+    @Test func editsDuringACopyOrSaveKeepTheDocumentDirty() {
+        let doc = EditorDocument(image: sampleImage(), scale: 2)
+        doc.add(doc.newAnnotation(.counter(CGPoint(x: 100, y: 100), 1)))
+        let saving = doc.revision
+        doc.add(doc.newAnnotation(.counter(CGPoint(x: 300, y: 100), 2)))
+        doc.markClean(asOf: saving)
+        #expect(doc.isDirty)
+
+        doc.markClean(asOf: doc.revision)
+        #expect(!doc.isDirty)
+    }
+
     @Test func cropMovesAnnotationsWithTheImage() {
         let doc = EditorDocument(image: sampleImage(), scale: 2)
         doc.add(doc.newAnnotation(.counter(CGPoint(x: 500, y: 400), 1)))
