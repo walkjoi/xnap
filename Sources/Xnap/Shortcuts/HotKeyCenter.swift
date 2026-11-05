@@ -1,10 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// System-wide hotkeys via Carbon's `RegisterEventHotKey`.
-///
-/// Unlike an event tap, this needs no Accessibility or Input Monitoring permission
-/// and works inside the App Sandbox.
+/// System-wide hotkeys via Carbon's `RegisterEventHotKey`: no extra permission, works in the sandbox.
 @MainActor
 final class HotKeyCenter {
     static let shared = HotKeyCenter()
@@ -30,6 +27,7 @@ final class HotKeyCenter {
     }
 
     /// Registers (or replaces) the hotkey with `id`. Returns false if the combination is taken.
+    /// While paused, installing waits for `resume()`, so this returns true without checking.
     @discardableResult
     func register(id: UInt32, shortcut: Shortcut, handler: @escaping () -> Void) -> Bool {
         unregister(id: id)
@@ -60,6 +58,8 @@ final class HotKeyCenter {
         guard pauseCount == 0 else { return }
         for (id, entry) in registered { install(id: id, shortcut: entry.0) }
     }
+
+    var isPaused: Bool { pauseCount > 0 }
 
     @discardableResult
     private func install(id: UInt32, shortcut: Shortcut) -> Bool {

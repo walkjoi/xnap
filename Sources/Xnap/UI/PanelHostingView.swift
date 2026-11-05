@@ -1,11 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Hosting view for floating, non-activating panels (HUD, preview, toast).
-///
-/// Such panels never become key, and Xnap is usually not the active app while
-/// they're on screen, so this view accepts the first click and tracks hover with an
-/// always-active tracking area rather than relying on the app being active.
+/// Hosting view for non-activating panels (HUD, preview, toast): accepts the first click and
+/// tracks hover even while Xnap isn't the active app.
 final class PanelHostingView<Content: View>: NSHostingView<Content> {
     var onHoverChange: ((Bool) -> Void)?
 

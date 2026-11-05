@@ -1,10 +1,8 @@
 import AppKit
 import Combine
 
-/// The editor's model: a base image plus editable annotations, with undo.
-///
-/// Every edit replaces `state` as a whole. Because `CGImage` is immutable and annotations
-/// are values, snapshots are cheap and undo/redo is just swapping states.
+/// The editor's model: a base image plus annotations, with undo. Every edit replaces
+/// `state` as a whole, so undo and redo just swap snapshots.
 @MainActor
 final class EditorDocument: ObservableObject {
     struct State {
@@ -15,6 +13,7 @@ final class EditorDocument: ObservableObject {
     @Published private(set) var state: State {
         didSet {
             if state.image !== oldValue.image { pixelator = Pixelator(image: state.image, scale: scale) }
+            revision += 1
             isDirty = true
         }
     }
@@ -30,6 +29,8 @@ final class EditorDocument: ObservableObject {
     @Published private(set) var canRedo = false
     /// True when there are edits that haven't been copied or saved.
     @Published var isDirty = false
+    /// Incremented on every change to `state`.
+    private(set) var revision = 0
 
     /// Image pixels per point (2 for Retina captures).
     let scale: CGFloat
@@ -58,8 +59,7 @@ final class EditorDocument: ObservableObject {
     }
 
     deinit {
-        // Block-based observations outlive the object they capture unless they are removed,
-        // so every editor window would otherwise leave three of them registered for good.
+        // Block observers stay registered until removed.
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -148,6 +148,11 @@ final class EditorDocument: ObservableObject {
 
     func flattened() -> CGImage? {
         AnnotationRenderer.render(image: state.image, annotations: state.annotations, pixelator: pixelator)
+    }
+
+    /// Marks the document clean unless it changed after `revision` was read.
+    func markClean(asOf revision: Int) {
+        if revision == self.revision { isDirty = false }
     }
 
     // MARK: Undo plumbing

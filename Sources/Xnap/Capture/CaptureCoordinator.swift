@@ -54,8 +54,7 @@ final class CaptureCoordinator {
                 Toast.show("Select a larger area to scroll-capture", symbol: "arrow.up.and.down", isError: true)
                 return
             }
-            // Capture just the scale: holding `selection` would keep the display snapshot
-            // alive for the whole session.
+            // Only the scale: capturing `selection` would keep its display snapshot alive.
             let scale = selection.scale
             ScrollCaptureSession.start(selection: selection, destination: destination) { [weak self] image in
                 guard let self, let image else { return }
@@ -92,8 +91,7 @@ final class CaptureCoordinator {
     // MARK: Delivery
 
     func deliver(_ image: CGImage, scale: CGFloat, to destination: CaptureDestination) {
-        // The shutter is the immediate feedback; encoding runs off the main thread, so the
-        // menu bar stays responsive even while a tall scrolling capture is being written.
+        // Immediate feedback; the encode below runs off the main thread.
         CaptureSound.play()
         Task {
             let savedURL: URL?

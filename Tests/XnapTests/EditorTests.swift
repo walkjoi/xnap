@@ -65,6 +65,27 @@ struct ShortcutTests {
     }
 }
 
+@Suite("Shortcut recorder")
+@MainActor
+struct ShortcutRecorderTests {
+    @Test func closingTheWindowEndsRecording() throws {
+        _ = NSApplication.shared
+        let recorder = ShortcutRecorderView(frame: CGRect(x: 0, y: 0, width: 160, height: 24))
+        let window = NSWindow(contentRect: recorder.frame, styleMask: [.titled, .closable],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = recorder
+
+        recorder.mouseDown(with: try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: CGPoint(x: 20, y: 12), modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+        #expect(HotKeyCenter.shared.isPaused)
+
+        window.close()
+        #expect(!HotKeyCenter.shared.isPaused)
+    }
+}
+
 @Suite("Editor")
 @MainActor
 struct EditorTests {
@@ -91,6 +112,18 @@ struct EditorTests {
         #expect(doc.annotations.count == 1)
         doc.undoManager.undo()
         #expect(doc.annotations.isEmpty)
+    }
+
+    @Test func editsDuringACopyOrSaveKeepTheDocumentDirty() {
+        let doc = EditorDocument(image: sampleImage(), scale: 2)
+        doc.add(doc.newAnnotation(.counter(CGPoint(x: 100, y: 100), 1)))
+        let saving = doc.revision
+        doc.add(doc.newAnnotation(.counter(CGPoint(x: 300, y: 100), 2)))
+        doc.markClean(asOf: saving)
+        #expect(doc.isDirty)
+
+        doc.markClean(asOf: doc.revision)
+        #expect(!doc.isDirty)
     }
 
     @Test func cropMovesAnnotationsWithTheImage() {
@@ -179,8 +212,7 @@ struct EditorTests {
         #expect(doc.selectedID == doc.annotations[0].id)
     }
 
-    /// The color panel stays open while new captures open their own editors, so it has to restyle
-    /// the selection in the editor in front, not in the one that first opened it.
+    /// The color panel restyles the selection in the editor in front, not the one that opened it.
     @Test func colorPanelFollowsTheEditorInFront() throws {
         _ = NSApplication.shared
         EditorWindowController.open(image: sampleImage(), scale: 2, title: "First")
@@ -226,8 +258,7 @@ struct EditorTests {
 
     @Test func rendersEveryToolForVisualCheck() throws {
         let doc = EditorDocument(image: sampleImage(), scale: 2)
-        // New shapes are auto-selected and a color change recolors the selection,
-        // so add these without selecting them.
+        // Added unselected, so a color change doesn't recolor them.
         func add(_ a: Annotation) { doc.add(a, select: false) }
         doc.color = .red
         add(doc.newAnnotation(.arrow(CGPoint(x: 700, y: 620), CGPoint(x: 420, y: 330))))
@@ -258,8 +289,7 @@ struct EditorTests {
         #expect(shot.width > 0)
     }
 
-    /// The canvas repaints only the region that changed instead of the whole view, so the risk
-    /// is an edit that stops invalidating anything at all and leaves stale pixels on screen.
+    /// Partial repaints risk an edit that invalidates nothing and leaves stale pixels.
     @Test func everyKindOfEditInvalidatesTheCanvas() {
         _ = NSApplication.shared
         let doc = EditorDocument(image: sampleImage(), scale: 2)
@@ -303,8 +333,7 @@ struct EditorTests {
         #expect((props?[kCGImagePropertyDPIWidth] as? Double) == 144)
     }
 
-    /// Encoding is the slow part of a capture, so it runs off the main thread. The background
-    /// path has to produce exactly what the synchronous one does.
+    /// The background encode must produce exactly what the synchronous one does.
     @Test func backgroundEncodingMatchesTheSynchronousPath() async throws {
         let image = sampleImage(width: 240, height: 160)
         for format in Preferences.ImageFormat.allCases {
@@ -323,8 +352,7 @@ struct EditorTests {
     }
 }
 
-/// A capture lives a long time — on the clipboard, in undo states, in a pinned window — and
-/// the app runs for weeks, so a capture must never keep the display snapshot it came from.
+/// Captures live long, so none may keep the display snapshot it came from.
 @Suite("CaptureMemory")
 @MainActor
 struct CaptureMemoryTests {
@@ -347,8 +375,7 @@ struct CaptureMemoryTests {
         let parent = try #require(coded(width: 256, height: 128).makeCGImage())
         let rect = CGRect(x: 32, y: 16, width: 64, height: 48)
 
-        // cropping(to:) inherits the parent's row stride because it is only a window onto
-        // the parent's pixels — which is exactly why it keeps them all alive.
+        // cropping(to:) keeps the parent's row stride: it's only a window onto the parent's pixels.
         let shared = try #require(parent.cropping(to: rect))
         #expect(shared.bytesPerRow == parent.bytesPerRow)
 
@@ -389,8 +416,7 @@ struct CaptureMemoryTests {
         #expect(doc.image.bytesPerRow < strideBefore)
     }
 
-    /// Guards against the document outliving its window: it owns three block-based
-    /// notification observations, which stay registered unless `deinit` removes them.
+    /// The document's block observers must not outlive it.
     @Test func editorDocumentDeallocatesWithItsObservers() throws {
         let image = try #require(coded(width: 64, height: 48).makeCGImage())
         weak var released: EditorDocument?
@@ -408,8 +434,7 @@ struct CaptureMemoryTests {
         }
     }
 
-    /// The pasteboard's TIFF promise must not pin a whole capture: it keeps the PNG bytes
-    /// that are already on the clipboard, and only one promise is alive at a time.
+    /// The TIFF promise holds the PNG bytes, not the capture, and only one is alive at a time.
     @Test func clipboardTIFFPromiseIsFulfilledFromThePNG() async throws {
         let image = try #require(coded(width: 64, height: 48).makeCGImage())
         try await OutputManager.shared.copy(image, scale: 2)
@@ -431,8 +456,7 @@ struct LoupeTests {
         #expect(w == Loupe.Window(originX: 93, originY: 73, offsetX: 7, offsetY: 7))
     }
 
-    /// Near an edge the window is pushed back inside rather than clipped, so the magnifier
-    /// keeps its scale and the marker follows the pointer off-centre.
+    /// Near an edge the window shifts inside rather than clipping, and the marker follows the pixel.
     @Test func shiftsTheWindowInsideAtTheEdges() {
         let topLeft = Loupe.window(x: 2, y: 1, width: 400, height: 300, span: span)
         #expect(topLeft == Loupe.Window(originX: 0, originY: 0, offsetX: 2, offsetY: 1))

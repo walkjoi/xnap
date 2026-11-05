@@ -116,8 +116,7 @@ struct EditorToolbar: View {
     }
 }
 
-/// Routes the shared color panel to the editor in front. The panel stays open while new captures
-/// open their own editors, so it follows whichever editor became main last, not the one that opened it.
+/// Routes the shared color panel to the editor in front, which may not be the one that opened it.
 @MainActor
 final class ColorPanelBridge: NSObject {
     static let shared = ColorPanelBridge()

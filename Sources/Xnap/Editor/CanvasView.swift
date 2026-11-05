@@ -1,10 +1,8 @@
 import AppKit
 import Combine
 
-/// Draws the screenshot with its annotations and turns mouse/keyboard input into edits.
-///
-/// The view is sized in points (image pixels ÷ scale) and flipped, so it lines up
-/// with the image's top-left pixel coordinates. The enclosing scroll view zooms it.
+/// Draws the screenshot with its annotations and turns mouse and keyboard input into edits.
+/// Sized in points and flipped, so it lines up with the image's top-left pixel coordinates.
 final class CanvasView: NSView {
     let document: EditorDocument
     private var subscriptions = Set<AnyCancellable>()
@@ -87,10 +85,8 @@ final class CanvasView: NSView {
 
     // MARK: Invalidation
 
-    /// `draw` repaints the base image inside the dirty rect, so invalidating the whole view on
-    /// every drag step means resampling the entire visible capture — which for a tall scrolling
-    /// capture is the difference between a smooth drag and a stuttering one. Narrow it to the
-    /// annotations that changed, and fall back to a full repaint whenever that isn't clear-cut.
+    /// Repaints only what changed, since a full repaint resamples the whole capture on every
+    /// drag step; falls back to a full repaint when that isn't clear.
     private func stateChanged(to state: EditorDocument.State) {
         let previous = shown
         shown = state
@@ -119,8 +115,7 @@ final class CanvasView: NSView {
     }
 
     private func cropChanged(to rect: CGRect?) {
-        // The crop tool dims everything outside its rect, so appearing or disappearing repaints
-        // the image; moving or resizing it only repaints the area the two rects cover.
+        // Showing or hiding the crop dims the whole image; moving it only repaints the two rects.
         guard let before = document.cropRect, let after = rect else { needsDisplay = true; return }
         let pad = 28 * pixelsPerScreenPoint
         invalidate(rect: before.union(after).insetBy(dx: -pad, dy: -pad))

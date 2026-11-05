@@ -36,6 +36,13 @@ final class ShortcutRecorderView: NSView {
         }
     }
 
+    /// Stops recording when the window closes, since closing doesn't resign the first responder.
+    private var closeObserver: NSObjectProtocol?
+
+    deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+    }
+
     override var intrinsicContentSize: NSSize { NSSize(width: 160, height: 24) }
     override var acceptsFirstResponder: Bool { true }
 
@@ -64,7 +71,19 @@ final class ShortcutRecorderView: NSView {
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil { isRecording = false }
+        stopRecordingWhenClosed(newWindow)
         super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func stopRecordingWhenClosed(_ window: NSWindow?) {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+        closeObserver = nil
+        guard let window else { return }
+        // Posted synchronously by `close()`, on the main thread.
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stopRecording() }
+            }
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -95,9 +114,7 @@ final class ShortcutRecorderView: NSView {
         }
         let candidate = Shortcut(keyCode: code, modifiers: modifiers)
         guard candidate.isValidGlobalShortcut else { NSSound.beep(); return }
-        // Stop first: committing re-registers every hotkey, and while recording has the centre
-        // paused those registrations are deferred and report success regardless, so a
-        // combination taken by another app would never be flagged as a conflict.
+        // Stop first, so the re-registration below runs unpaused and can report conflicts.
         stopRecording()
         onChange?(candidate)
     }

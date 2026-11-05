@@ -6,9 +6,7 @@ import SwiftUI
 enum Toast {
     private static var panel: NSPanel?
     private static var hideTask: Task<Void, Never>?
-    /// Identifies the toast currently owning the shared panel. Cancelling `hideTask` does not
-    /// stop a fade-out that already started, and its completion would otherwise order the
-    /// panel out from under whichever toast replaced it.
+    /// The toast that owns the shared panel, so a stale fade-out can't hide its replacement.
     private static var generation = 0
 
     static func show(_ message: String, symbol: String = "checkmark.circle.fill", isError: Bool = false,

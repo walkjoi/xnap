@@ -139,14 +139,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func copy(_ sender: Any?) { Task { await copyToClipboard() } }
 
-    /// Flattening has to stay on the main thread (it draws text through AppKit), but the
-    /// encode behind `copy` does not, so a tall capture no longer freezes the editor.
+    /// Flattens on the main thread (text draws through AppKit); the encode runs in the background.
     private func copyToClipboard() async {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let image = editorDocument.flattened() else { return }
         do {
             try await OutputManager.shared.copy(image, scale: editorDocument.scale)
-            editorDocument.isDirty = false
+            editorDocument.markClean(asOf: revision)
             Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
         } catch {
             presentError(error)
@@ -155,11 +155,12 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func saveDocument(_ sender: Any?) {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let image = editorDocument.flattened() else { return }
         Task {
             do {
                 let url = try await OutputManager.shared.save(image, scale: editorDocument.scale)
-                editorDocument.isDirty = false
+                editorDocument.markClean(asOf: revision)
                 Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
             } catch {
                 presentError(error)
@@ -169,6 +170,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func saveDocumentAs(_ sender: Any?) {
         canvas.commitTextEditing()
+        let revision = editorDocument.revision
         guard let window, let image = editorDocument.flattened() else { return }
         let panel = NSSavePanel()
         let format = Preferences.shared.imageFormat
@@ -180,7 +182,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             Task {
                 do {
                     try await OutputManager.shared.write(image, scale: self.editorDocument.scale, to: url)
-                    self.editorDocument.isDirty = false
+                    self.editorDocument.markClean(asOf: revision)
                     Toast.show("Saved “\(url.lastPathComponent)”", symbol: "square.and.arrow.down.fill")
                 } catch {
                     self.presentError(error)
@@ -234,10 +236,10 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                // Close only once the clipboard actually holds the image.
+                // Stay open if the copy failed or the document changed during it.
                 Task {
                     await self.copyToClipboard()
-                    sender.close()
+                    if !self.editorDocument.isDirty { sender.close() }
                 }
             case .alertThirdButtonReturn:
                 self.editorDocument.isDirty = false
@@ -256,7 +258,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 }
 
-/// Keeps the editorDocument centered when it is smaller than the visible area.
+/// Keeps the canvas centered when it is smaller than the visible area.
 final class CenteringClipView: NSClipView {
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var rect = super.constrainBoundsRect(proposedBounds)

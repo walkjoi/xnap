@@ -1,10 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// A tightly packed 32-bit pixel buffer in sRGB.
-///
-/// Layout is BGRA in memory (premultiplied alpha, little-endian ARGB32), which is
-/// what ScreenCaptureKit delivers for `kCVPixelFormatType_32BGRA`. Row 0 is the top row.
+/// A tightly packed 32-bit sRGB pixel buffer: BGRA in memory (premultiplied), as
+/// ScreenCaptureKit delivers it. Row 0 is the top row.
 public struct Bitmap: Sendable, Equatable {
     public let width: Int
     public let height: Int
@@ -87,13 +85,8 @@ public struct Bitmap: Sendable, Equatable {
         return Bitmap(width: width, height: pixels.count / max(1, width * 4), pixels: pixels)
     }
 
-    /// Vertically concatenates bitmaps straight into a `CGImage`, releasing each part as it
-    /// is copied.
-    ///
-    /// Going through `stack` and then `makeCGImage` would hold three copies of the result at
-    /// once — the parts, the concatenated bitmap and the `Data` the image is built from. A tall
-    /// scrolling capture is hundreds of megabytes, so the image is assembled in a single buffer
-    /// that the provider takes ownership of, and `parts` is emptied along the way.
+    /// Vertically concatenates bitmaps straight into a `CGImage`, emptying `parts` as it goes,
+    /// so a tall capture is held once rather than three times.
     public static func stackedImage(consuming parts: inout [Bitmap]) -> CGImage? {
         guard let width = parts.first?.width, width > 0,
               parts.allSatisfy({ $0.width == width }) else { return nil }

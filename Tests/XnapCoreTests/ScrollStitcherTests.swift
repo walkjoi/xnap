@@ -204,8 +204,7 @@ struct ScrollStitcherTests {
         #expect(back == doc)
     }
 
-    /// `takeImage` assembles the result in one buffer instead of going through `stack` and
-    /// then a `Data` copy, so it has to agree with `makeBitmap` pixel for pixel.
+    /// `takeImage` builds the image its own way, so it must match `makeBitmap` pixel for pixel.
     @Test func takeImageMatchesTheStitchedBitmap() throws {
         let doc = makeDocument(width: width, height: 2000, seed: 23)
         let header = solid(width: width, height: 40, value: 80)
@@ -223,8 +222,7 @@ struct ScrollStitcherTests {
         #expect(roundTripped == expected)
     }
 
-    /// It is named `take` because it consumes the stitcher: the slices are released as they
-    /// are copied, so a tall capture never needs two copies of itself in memory at once.
+    /// `takeImage` consumes the stitcher, releasing the slices as it copies them.
     @Test func takeImageReleasesTheSlices() {
         let doc = makeDocument(width: width, height: 1500, seed: 31)
         let stitcher = ScrollStitcher()

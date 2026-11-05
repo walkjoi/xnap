@@ -1,9 +1,7 @@
 import AppKit
 
-/// Draws annotations with Core Graphics — shared by the on-screen canvas and the export.
-///
-/// The context must be in image-pixel units with a top-left origin (y down), and the
-/// current `NSGraphicsContext` must wrap it with `flipped: true` so text draws upright.
+/// Draws annotations for both the canvas and the export. The context must be in image pixels
+/// with a top-left origin, wrapped by a flipped `NSGraphicsContext` so text draws upright.
 enum AnnotationRenderer {
     static func draw(_ a: Annotation, in ctx: CGContext, pixelator: Pixelator, shadowScale: CGFloat) {
         ctx.saveGState()
@@ -181,9 +179,7 @@ enum AnnotationRenderer {
 final class Pixelator {
     let image: CGImage
     let blockSize: CGFloat
-    /// Keyed by the snapped region, which is always whole pixels. A struct of four integers
-    /// hashes without allocating, unlike the interpolated string this used to build on every
-    /// single draw of every mosaic.
+    /// Cache key: the snapped region, in whole pixels.
     private struct Region: Hashable {
         let x: Int, y: Int, width: Int, height: Int
         init(_ r: CGRect) {
