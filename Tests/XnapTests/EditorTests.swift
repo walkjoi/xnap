@@ -65,6 +65,29 @@ struct ShortcutTests {
     }
 }
 
+@Suite("Shortcut recorder")
+@MainActor
+struct ShortcutRecorderTests {
+    /// Recording pauses every global hotkey. Closing the window doesn't make the field resign
+    /// first responder, so recording has to end with the window, or the hotkeys stay off.
+    @Test func closingTheWindowEndsRecording() throws {
+        _ = NSApplication.shared
+        let recorder = ShortcutRecorderView(frame: CGRect(x: 0, y: 0, width: 160, height: 24))
+        let window = NSWindow(contentRect: recorder.frame, styleMask: [.titled, .closable],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = recorder
+
+        recorder.mouseDown(with: try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: CGPoint(x: 20, y: 12), modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)))
+        #expect(HotKeyCenter.shared.isPaused)
+
+        window.close()
+        #expect(!HotKeyCenter.shared.isPaused)
+    }
+}
+
 @Suite("Editor")
 @MainActor
 struct EditorTests {
