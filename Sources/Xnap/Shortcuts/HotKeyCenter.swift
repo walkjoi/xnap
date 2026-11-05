@@ -61,7 +61,6 @@ final class HotKeyCenter {
         for (id, entry) in registered { install(id: id, shortcut: entry.0) }
     }
 
-    /// True while recording a shortcut has the hotkeys switched off.
     var isPaused: Bool { pauseCount > 0 }
 
     @discardableResult

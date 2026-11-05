@@ -237,8 +237,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                // Close only once the clipboard holds the image with every edit in it. A failed
-                // copy, or edits made while it ran, leave the document dirty and the window open.
+                // Stay open if the copy failed or the document changed during it.
                 Task {
                     await self.copyToClipboard()
                     if !self.editorDocument.isDirty { sender.close() }

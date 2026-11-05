@@ -68,8 +68,6 @@ struct ShortcutTests {
 @Suite("Shortcut recorder")
 @MainActor
 struct ShortcutRecorderTests {
-    /// Recording pauses every global hotkey. Closing the window doesn't make the field resign
-    /// first responder, so recording has to end with the window, or the hotkeys stay off.
     @Test func closingTheWindowEndsRecording() throws {
         _ = NSApplication.shared
         let recorder = ShortcutRecorderView(frame: CGRect(x: 0, y: 0, width: 160, height: 24))
@@ -116,8 +114,6 @@ struct EditorTests {
         #expect(doc.annotations.isEmpty)
     }
 
-    /// Copy and save encode off the main thread, so editing can go on while they run. Edits made
-    /// in that time aren't in the output, so finishing must not mark them as saved.
     @Test func editsDuringACopyOrSaveKeepTheDocumentDirty() {
         let doc = EditorDocument(image: sampleImage(), scale: 2)
         doc.add(doc.newAnnotation(.counter(CGPoint(x: 100, y: 100), 1)))

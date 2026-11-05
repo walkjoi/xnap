@@ -36,8 +36,7 @@ final class ShortcutRecorderView: NSView {
         }
     }
 
-    /// Closing a window doesn't make its first responder resign, so without this a field left
-    /// recording when Settings closed kept every global hotkey paused until it was reopened.
+    /// Stops recording when the window closes, since closing doesn't resign the first responder.
     private var closeObserver: NSObjectProtocol?
 
     deinit {
@@ -80,7 +79,7 @@ final class ShortcutRecorderView: NSView {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
         closeObserver = nil
         guard let window else { return }
-        // No queue: it runs inside `close()`, which AppKit only calls on the main thread.
+        // Posted synchronously by `close()`, on the main thread.
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stopRecording() }
