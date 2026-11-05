@@ -139,8 +139,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func copy(_ sender: Any?) { Task { await copyToClipboard() } }
 
-    /// Flattening has to stay on the main thread (it draws text through AppKit), but the
-    /// encode behind `copy` does not, so a tall capture no longer freezes the editor.
+    /// Flattens on the main thread (text draws through AppKit); the encode runs in the background.
     private func copyToClipboard() async {
         canvas.commitTextEditing()
         let revision = editorDocument.revision
@@ -259,7 +258,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
     }
 }
 
-/// Keeps the editorDocument centered when it is smaller than the visible area.
+/// Keeps the canvas centered when it is smaller than the visible area.
 final class CenteringClipView: NSClipView {
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var rect = super.constrainBoundsRect(proposedBounds)

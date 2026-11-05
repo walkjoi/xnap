@@ -1,16 +1,8 @@
 import Foundation
 
-/// Compact per-row fingerprints of a frame, used to find how far content moved
-/// between two consecutive captures of the same screen region.
-///
-/// * `hashes` — exact hash of each row (colors quantized to 5 bits, columns sampled).
-/// * `flat`   — rows with (almost) no detail, e.g. blank background. These match
-///              everywhere and are ignored when voting on an offset.
-/// * `features` — `binCount` average-luminance bins per row, a noise-tolerant
-///              descriptor used for verification and the fallback search.
-///
-/// The right edge is excluded from fingerprints so macOS overlay scrollbars,
-/// which move while scrolling, don't disturb matching.
+/// Per-row fingerprints of a frame for measuring how far content moved between captures:
+/// exact `hashes`, `flat` rows with almost no detail (ignored when voting), and noise tolerant
+/// luminance `features`. The right edge is left out so overlay scrollbars don't interfere.
 struct FrameSignature {
     static let binCount = 32
 

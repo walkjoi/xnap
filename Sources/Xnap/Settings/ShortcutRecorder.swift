@@ -114,9 +114,7 @@ final class ShortcutRecorderView: NSView {
         }
         let candidate = Shortcut(keyCode: code, modifiers: modifiers)
         guard candidate.isValidGlobalShortcut else { NSSound.beep(); return }
-        // Stop first: committing re-registers every hotkey, and while recording has the centre
-        // paused those registrations are deferred and report success regardless, so a
-        // combination taken by another app would never be flagged as a conflict.
+        // Stop first, so the re-registration below runs unpaused and can report conflicts.
         stopRecording()
         onChange?(candidate)
     }

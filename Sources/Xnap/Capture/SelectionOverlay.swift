@@ -19,11 +19,7 @@ struct CaptureSelection {
     var croppedImage: CGImage? { snapshot.image.croppedCopy(to: pixelRect) }
 }
 
-/// Full-screen "freeze frame" overlay for picking an area or a window.
-///
-/// Each display shows its own snapshot, so menus and hover states captured at the
-/// moment the shortcut was pressed are preserved. Drag to select; click to take the
-/// window under the pointer (or the whole screen); Esc cancels.
+/// Full screen "freeze frame" overlay for picking an area or a window, one per display.
 @MainActor
 final class SelectionOverlay {
     enum Purpose {
@@ -120,10 +116,8 @@ private final class SelectionView: NSView {
     private var finished = false
 
     private let imageLayer = CALayer()
-    /// The dim is four plain layers tiled around the selection, and the border is a plain
-    /// layer's border, rather than display-sized `CAShapeLayer`s. Changing a shape layer's
-    /// path makes the render server re-rasterize the whole layer, and these are updated on
-    /// every pointer move — which on a 5K display means re-rasterizing 5120×2880 each time.
+    /// Plain layers rather than display-sized `CAShapeLayer`s, whose path changes re-rasterize
+    /// the whole display on every pointer move.
     private let dimBands = [CALayer(), CALayer(), CALayer(), CALayer()]
     private let borderLayer = CALayer()
     private let crossH = CALayer()
@@ -401,8 +395,7 @@ private final class SelectionView: NSView {
         loupeImage.contents = image.cropping(to: CGRect(x: window.originX, y: window.originY,
                                                         width: span, height: span))
 
-        // The centre cell marks the pixel actually under the pointer, which is off-centre
-        // once the window has been pushed back inside the image near an edge.
+        // Near an edge the sampled pixel is off centre, so the marker follows it.
         let cell = Self.loupeSize / CGFloat(span)
         loupeCenter.frame = CGRect(x: CGFloat(window.offsetX) * cell,
                                    y: Self.loupeSize - CGFloat(window.offsetY + 1) * cell,
@@ -424,8 +417,7 @@ private final class SelectionView: NSView {
         loupeInfo.isHidden = false
     }
 
-    /// One reused 1×1 context, because the colour under the pointer is sampled on every
-    /// mouse-moved event and building a `CGContext` per event is pure waste.
+    /// Reused for the color sample taken on every mouse move.
     private lazy var probe: CGContext? = CGContext(
         data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
         space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -450,13 +442,8 @@ enum Loupe {
         var offsetX: Int, offsetY: Int
     }
 
-    /// The `span`×`span` pixel square to magnify around (`x`, `y`), shifted to stay fully
-    /// inside the image.
-    ///
-    /// A window that hangs off the edge comes back from `cropping(to:)` smaller than asked
-    /// for and then gets stretched to fill the loupe, which both changes the magnification
-    /// and moves the centre marker off the pixel being sampled. Shifting instead of shrinking
-    /// keeps the scale honest.
+    /// The `span`×`span` square to magnify around (`x`, `y`), shifted rather than clipped at the
+    /// edges so the magnification and the centre marker stay exact.
     static func window(x: Int, y: Int, width: Int, height: Int, span: Int) -> Window {
         let originX = min(max(0, x - span / 2), max(0, width - span))
         let originY = min(max(0, y - span / 2), max(0, height - span))

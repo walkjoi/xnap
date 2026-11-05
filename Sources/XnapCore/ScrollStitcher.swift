@@ -1,18 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// Builds one tall image out of successive captures of a scrolling region.
-///
-/// Feed it every frame captured from the same screen rectangle while the user (or
-/// auto-scroll) scrolls. For each frame it works out the vertical offset relative to
-/// the previous frame and appends only the newly revealed rows.
-///
-/// Model: the scrolled page is a "document". Frame `k` shows document rows
-/// `[offset_k, offset_k + H)`, except for rows that stay fixed on screen: sticky
-/// headers (top `fixedTop` rows) and sticky footers/toolbars (bottom `fixedBottom`
-/// rows). Those are detected at the first real movement. Only the scrolling band
-/// between them is used for matching and appending. The footer is added once at the
-/// end, taken from the frame that was scrolled furthest down.
+/// Builds one tall image out of successive captures of a scrolling region. Each frame's
+/// offset from the previous one is measured and only newly revealed rows are appended;
+/// sticky headers and footers are detected at the first movement and kept once.
 public final class ScrollStitcher {
     public struct Configuration: Sendable {
         /// Hard limit on the height of the result, in pixels.
@@ -38,7 +29,7 @@ public final class ScrollStitcher {
         case unchanged
         /// Content moved by `delta` pixels (positive = scrolled down); `appended` new rows were added.
         case scrolled(delta: Int, appended: Int)
-        /// No overlap with the previous frame — scrolled too far in one go. Scroll back a little.
+        /// No overlap with the previous frame: it scrolled too far in one go.
         case lostTrack
         /// Frame size differs from the first frame; ignored.
         case sizeMismatch
@@ -175,9 +166,7 @@ public final class ScrollStitcher {
         return Bitmap.stack(slices + (footer.map { [$0] } ?? []))
     }
 
-    /// The finished image. **Consumes** the stitcher: the appended slices are handed to the
-    /// image one at a time and released as they go, so composing a tall capture needs room
-    /// for one copy of the result rather than three. Call it once, at the end of a session.
+    /// The finished image. Consumes the stitcher, releasing slices as it copies them, so call it once.
     public func takeImage() -> CGImage? {
         guard !slices.isEmpty else { return nil }
         if let footer { slices.append(footer) }

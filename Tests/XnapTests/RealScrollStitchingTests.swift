@@ -2,10 +2,8 @@ import AppKit
 import XnapCore
 import Testing
 
-/// End-to-end stitching on real AppKit rendering: a text view in a scroll view with a
-/// fixed toolbar above it is scrolled by uneven amounts, each visible state is rendered
-/// like the screen would show it, and the stitched result is compared with a render of
-/// the whole document.
+/// End-to-end stitching on real AppKit rendering: a text view under a fixed toolbar is scrolled
+/// by uneven amounts, and the stitched result is compared with a render of the whole document.
 @Suite("RealScrollStitching")
 @MainActor
 struct RealScrollStitchingTests {

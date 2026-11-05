@@ -1,10 +1,8 @@
 import AppKit
 import Combine
 
-/// The editor's model: a base image plus editable annotations, with undo.
-///
-/// Every edit replaces `state` as a whole. Because `CGImage` is immutable and annotations
-/// are values, snapshots are cheap and undo/redo is just swapping states.
+/// The editor's model: a base image plus annotations, with undo. Every edit replaces
+/// `state` as a whole, so undo and redo just swap snapshots.
 @MainActor
 final class EditorDocument: ObservableObject {
     struct State {
@@ -61,8 +59,7 @@ final class EditorDocument: ObservableObject {
     }
 
     deinit {
-        // Block-based observations outlive the object they capture unless they are removed,
-        // so every editor window would otherwise leave three of them registered for good.
+        // Block observers stay registered until removed.
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 

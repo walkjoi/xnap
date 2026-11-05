@@ -3,11 +3,8 @@ import CoreMedia
 import XnapCore
 import ScreenCaptureKit
 
-/// Streams frames of a fixed screen rectangle with ScreenCaptureKit.
-///
-/// Xnap's own windows are excluded from the stream, so the highlight frame and
-/// HUD drawn around the region never end up in the stitched image. Only frames whose
-/// content actually changed are delivered (`SCFrameStatus.complete`).
+/// Streams changed frames of a fixed screen rectangle with ScreenCaptureKit. Xnap's own
+/// windows are excluded, so the HUD and highlight never end up in the image.
 final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private var stream: SCStream?
     private let queue: DispatchQueue
@@ -21,8 +18,7 @@ final class ScrollFrameStream: NSObject, SCStreamOutput, SCStreamDelegate, @unch
 
     /// - Parameter sourceRect: region in the display's local, top-left-origin space, in points.
     ///
-    /// Pinned to the main actor, together with `stop`, so that `stream` is only ever touched
-    /// from one place. Frames are still delivered on the sample handler queue.
+    /// Main actor only, like `stop`, so `stream` is touched from one place; frames still arrive on `queue`.
     @MainActor
     func start(filter: SCContentFilter, sourceRect: CGRect, scale: CGFloat) async throws {
         let config = SCStreamConfiguration()

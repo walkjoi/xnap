@@ -1,10 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// System-wide hotkeys via Carbon's `RegisterEventHotKey`.
-///
-/// Unlike an event tap, this needs no Accessibility or Input Monitoring permission
-/// and works inside the App Sandbox.
+/// System-wide hotkeys via Carbon's `RegisterEventHotKey`: no extra permission, works in the sandbox.
 @MainActor
 final class HotKeyCenter {
     static let shared = HotKeyCenter()

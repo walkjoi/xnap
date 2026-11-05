@@ -37,13 +37,8 @@ extension CGImage {
         CGSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
     }
 
-    /// A crop that owns its pixels, in the same top-left-origin space as `cropping(to:)`.
-    ///
-    /// `cropping(to:)` only returns a window onto the original: it keeps the parent's data
-    /// provider and row stride alive. Cropping a small area out of a display snapshot would
-    /// therefore pin the whole screen's pixels — tens of megabytes — for as long as the result
-    /// lives, and captures are long-lived (clipboard, editor undo states, pinned windows).
-    /// Note that `copy()` does not detach either; the pixels have to be redrawn.
+    /// A crop in the same top-left-origin space as `cropping(to:)`, but owning its pixels:
+    /// `cropping(to:)` and `copy()` keep the parent's alive, pinning a whole display snapshot.
     func croppedCopy(to rect: CGRect) -> CGImage? {
         let clamped = rect.integral.intersection(CGRect(x: 0, y: 0, width: width, height: height))
         guard clamped.width >= 1, clamped.height >= 1, let view = cropping(to: clamped) else { return nil }

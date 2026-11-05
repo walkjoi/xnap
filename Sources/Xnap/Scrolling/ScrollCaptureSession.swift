@@ -2,11 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import XnapCore
 
-/// One scrolling capture, from region selection to the stitched image.
-///
-/// Flow: the region is highlighted and a HUD appears. The user scrolls the content
-/// under it (or starts Auto-Scroll); frames stream in and are stitched live. ⏎ or
-/// "Done" finishes, ⎋ or "Cancel" aborts. Auto-scroll finishes by itself at the end.
+/// One scrolling capture, from the selected region to the stitched image.
 @MainActor
 final class ScrollCaptureSession {
     private(set) static var current: ScrollCaptureSession?
@@ -14,8 +10,7 @@ final class ScrollCaptureSession {
     private static let escapeHotKey: UInt32 = 900
     private static let returnHotKey: UInt32 = 901
 
-    /// Only the geometry of the selection is kept. Holding the `CaptureSelection` itself would
-    /// pin the whole display snapshot it was picked from for the entire session.
+    /// Only the selection's geometry: holding the selection would pin its display snapshot.
     private let screen: NSScreen
     private let region: CGRect
     private let scale: CGFloat
@@ -88,13 +83,11 @@ final class ScrollCaptureSession {
             guard let display = content.displays.first(where: { $0.displayID == screen.displayID }) else {
                 throw ScreenCapture.CaptureError.noDisplay
             }
-            // ⎋ and ⏎ are live from the moment the hotkeys above are registered, so the session
-            // can already be over by the time the capture is ready to start.
+            // ⎋ and ⏎ are live already, so the session may have ended in the meantime.
             guard !isOver else { return }
             try await stream.start(filter: ScreenCapture.filter(for: display, in: content),
                                    sourceRect: region, scale: scale)
-            // Ended while the stream was starting: `cancel` found nothing to stop, so stop it
-            // here or it would keep capturing with no session left to own it.
+            // Ended while the stream was starting, before `cancel` could stop it.
             if isOver { await stream.stop() }
         } catch {
             guard !isOver else { return }

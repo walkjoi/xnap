@@ -21,10 +21,6 @@ final class OutputManager {
     }
 
     /// Copies or saves according to `destination`. Returns the file URL if one was written.
-    ///
-    /// Encoding happens off the main thread: PNG takes tens of milliseconds for an area
-    /// capture, a few hundred for a full 5K screen and around a second for a tall scrolling
-    /// capture, which is far too long to block the menu bar and the preview for.
     @discardableResult
     func deliver(_ image: CGImage, scale: CGFloat, to destination: CaptureDestination) async throws -> URL? {
         switch destination {
@@ -46,8 +42,7 @@ final class OutputManager {
 
     // MARK: Pasteboard
 
-    /// Keeps the pasteboard's TIFF promise fulfillable. Exactly one is alive at a time: each
-    /// copy replaces the last, so nothing accumulates over a long-running session.
+    /// Keeps the pasteboard's TIFF promise alive; each copy replaces the last.
     private var tiffPromise: LazyTIFFProvider?
 
     func copy(_ image: CGImage, scale: CGFloat) async throws {
@@ -91,8 +86,7 @@ final class OutputManager {
         }
     }
 
-    /// Encodes on a background thread. `CGImageDestination` is purely CPU-bound, and the cost
-    /// scales with the pixel count, so a tall scrolling capture must not run on the main thread.
+    /// Encodes on a background thread, since a tall capture can take about a second.
     func encoded(_ image: CGImage, scale: CGFloat, as format: Preferences.ImageFormat) async throws -> Data {
         let quality = prefs.jpegQuality
         let task = Task.detached(priority: .userInitiated) {
@@ -119,8 +113,6 @@ final class OutputManager {
         return CGImageDestinationFinalize(dest) ? data as Data : nil
     }
 
-    /// Building a `DateFormatter` is expensive and this runs for every save and every editor
-    /// window title, so it is made once.
     private static let fileNameFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -150,12 +142,10 @@ final class OutputManager {
         return URL(fileURLWithPath: home).appendingPathComponent("Pictures/Xnap", isDirectory: true)
     }
 
-    /// Resolving a bookmark hits the filesystem, and `saveFolder` is read on every save and on
-    /// every render of the Settings pane, so the result is kept until the bookmark changes.
+    /// Cached until the bookmark changes, since resolving it hits the filesystem.
     private var resolvedFolder: (bookmark: Data, url: URL, isStale: Bool)?
 
-    /// The folder screenshots are saved to. Custom folders are remembered with a
-    /// security-scoped bookmark so the sandboxed app can keep writing there.
+    /// The folder screenshots are saved to. Custom folders are kept as security-scoped bookmarks.
     var saveFolder: URL { resolveSaveFolder()?.url ?? defaultFolder }
 
     private func resolveSaveFolder() -> (bookmark: Data, url: URL, isStale: Bool)? {
@@ -187,9 +177,7 @@ final class OutputManager {
             throw OutputError.folderUnavailable(folder.path)
         }
         let result = try body(folder)
-        // A stale bookmark still resolves but will eventually stop. Re-record it now that the
-        // folder has proven writable, so a renamed or moved folder keeps working instead of
-        // silently falling back to ~/Pictures/Xnap one day.
+        // A stale bookmark still resolves but will stop working; refresh it after a successful write.
         if entry?.isStale == true { setSaveFolder(folder) }
         return result
     }
@@ -198,11 +186,7 @@ final class OutputManager {
         _ = try? withSaveFolder { NSWorkspace.shared.open($0) }
     }
 
-    /// Writes a temporary PNG, used for dragging a capture into other apps.
-    ///
-    /// The previous drag file is deleted first, so these don't pile up unbounded in the
-    /// container's temporary directory over a long-running session. Any earlier drag has
-    /// already been dropped (or abandoned) by the time a new one starts.
+    /// Writes a temporary PNG for dragging a capture into other apps, replacing the previous one.
     func temporaryFile(for image: CGImage, scale: CGFloat) -> URL? {
         guard let data = encode(image, scale: scale, as: .png) else { return nil }
         let fm = FileManager.default
@@ -215,12 +199,8 @@ final class OutputManager {
     }
 }
 
-/// Supplies TIFF data to the pasteboard only when requested.
-///
-/// It keeps the PNG bytes that are already on the pasteboard rather than the `CGImage`, and
-/// decodes them if the promise is ever called in. Holding the image instead would keep a whole
-/// uncompressed capture resident — and, before captures were detached from their snapshot, the
-/// entire display's pixels with it — for as long as the clipboard held the item.
+/// Supplies TIFF to the pasteboard only on request, decoding it from the PNG bytes already
+/// there, so no uncompressed capture stays resident while the clipboard holds it.
 private final class LazyTIFFProvider: NSObject, NSPasteboardItemDataProvider {
     private let png: Data
     private let pointSize: CGSize

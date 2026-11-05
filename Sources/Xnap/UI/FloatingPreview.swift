@@ -162,7 +162,7 @@ final class FloatingPreview {
     private func dragItem() -> NSItemProvider {
         guard let url = savedURL ?? OutputManager.shared.temporaryFile(for: image, scale: scale),
               let provider = NSItemProvider(contentsOf: url) else { return NSItemProvider() }
-        // Once dropped somewhere, the preview has done its job.
+        // onDrag has no drop callback, so close shortly after the drag starts.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
             self?.close(animated: true)
