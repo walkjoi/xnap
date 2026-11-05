@@ -245,6 +245,9 @@ private final class SelectionView: NSView {
     override func cursorUpdate(with event: NSEvent) { NSCursor.crosshair.set() }
 
     override func mouseEntered(with event: NSEvent) {
+        // ⏎ and C act on the key window's display. Only the display under the pointer when the
+        // overlay opened is made key, so the key window has to follow the pointer onto the others.
+        window?.makeKey()
         NSCursor.crosshair.set()
         mouse = point(for: event)
         updateHover()
@@ -255,6 +258,8 @@ private final class SelectionView: NSView {
         guard dragOrigin == nil else { return }
         mouse = nil
         hoveredWindow = nil
+        // Nothing on this display is under the pointer any more, so C has no color to copy here.
+        loupeColorHex = ""
         refresh()
     }
 
