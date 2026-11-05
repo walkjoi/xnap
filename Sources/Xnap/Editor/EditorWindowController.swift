@@ -139,17 +139,30 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
 
     @objc func copy(_ sender: Any?) { Task { await copyToClipboard() } }
 
+    /// How the flattened image reaches the clipboard, and how a failure is shown.
+    /// Replaceable so tests can make copying fail without breaking the real encoder.
+    var copyImage: @MainActor (CGImage, CGFloat) async throws -> Void = { image, scale in
+        try await OutputManager.shared.copy(image, scale: scale)
+    }
+    var showCopyError: (@MainActor (Error) -> Void)?
+
     /// Flattening has to stay on the main thread (it draws text through AppKit), but the
     /// encode behind `copy` does not, so a tall capture no longer freezes the editor.
-    private func copyToClipboard() async {
+    ///
+    /// Returns true only once the clipboard actually holds the image, so callers that
+    /// throw the annotations away afterwards (Copy & Close) can rely on it.
+    @discardableResult
+    private func copyToClipboard() async -> Bool {
         canvas.commitTextEditing()
-        guard let image = editorDocument.flattened() else { return }
         do {
-            try await OutputManager.shared.copy(image, scale: editorDocument.scale)
+            guard let image = editorDocument.flattened() else { throw OutputManager.OutputError.encodingFailed }
+            try await copyImage(image, editorDocument.scale)
             editorDocument.isDirty = false
             Toast.show("Copied to clipboard", symbol: "doc.on.doc.fill")
+            return true
         } catch {
-            presentError(error)
+            if let showCopyError { showCopyError(error) } else { presentError(error) }
+            return false
         }
     }
 
@@ -232,21 +245,25 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate, NSMenu
         alert.addButton(withTitle: "Discard")
         alert.beginSheetModal(for: sender) { [weak self] response in
             guard let self else { return }
-            switch response {
-            case .alertFirstButtonReturn:
-                // Close only once the clipboard actually holds the image.
-                Task {
-                    await self.copyToClipboard()
-                    sender.close()
-                }
-            case .alertThirdButtonReturn:
-                self.editorDocument.isDirty = false
-                sender.close()
-            default:
-                break
-            }
+            Task { await self.resolveClose(response, window: sender) }
         }
         return false
+    }
+
+    /// Acts on the "Keep your annotations?" answer. Copy & Close closes only once the
+    /// clipboard actually holds the image: if copying fails, the window and its
+    /// annotations stay, and the error says why.
+    func resolveClose(_ response: NSApplication.ModalResponse, window: NSWindow) async {
+        switch response {
+        case .alertFirstButtonReturn:
+            guard await copyToClipboard() else { return }
+            window.close()
+        case .alertThirdButtonReturn:
+            editorDocument.isDirty = false
+            window.close()
+        default:
+            break
+        }
     }
 
     func windowWillClose(_ notification: Notification) {

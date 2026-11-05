@@ -207,6 +207,82 @@ struct EditorTests {
         #expect(first.editorDocument.color == .red)
     }
 
+    // MARK: Closing with unsaved annotations
+
+    private struct CopyFailed: Error {}
+
+    /// An editor with one unsaved annotation, as when "Keep your annotations?" is asked.
+    private func dirtyEditor(_ title: String) throws -> (EditorWindowController, NSWindow) {
+        _ = NSApplication.shared
+        EditorWindowController.open(image: sampleImage(), scale: 2, title: title)
+        let editor = try #require(NSApp.windows.compactMap { $0.windowController as? EditorWindowController }
+            .first { $0.window?.title == title })
+        let window = try #require(editor.window)
+        let doc = editor.editorDocument
+        doc.add(doc.newAnnotation(.rectangle(CGRect(x: 40, y: 40, width: 120, height: 80))))
+        #expect(doc.isDirty)
+        return (editor, window)
+    }
+
+    /// Copy & Close used to close even when the copy failed, losing the annotations.
+    @Test func copyAndCloseKeepsTheWindowWhenCopyingFails() async throws {
+        let (editor, window) = try dirtyEditor("Copy fails")
+        defer { editor.editorDocument.isDirty = false; if window.isVisible { window.close() } }
+        var shownErrors: [Error] = []
+        editor.copyImage = { _, _ in throw CopyFailed() }
+        editor.showCopyError = { shownErrors.append($0) }
+
+        await editor.resolveClose(.alertFirstButtonReturn, window: window)
+
+        #expect(window.isVisible)
+        #expect(editor.editorDocument.isDirty)
+        #expect(editor.editorDocument.annotations.count == 1)
+        #expect(shownErrors.count == 1)
+        #expect(shownErrors.allSatisfy { $0 is CopyFailed })
+    }
+
+    @Test func copyAndCloseClosesOnceCopied() async throws {
+        let (editor, window) = try dirtyEditor("Copy succeeds")
+        defer { if window.isVisible { window.close() } }
+        var copied: [(width: Int, scale: CGFloat)] = []
+        editor.copyImage = { image, scale in copied.append((width: image.width, scale: scale)) }
+        editor.showCopyError = { Issue.record($0) }
+
+        await editor.resolveClose(.alertFirstButtonReturn, window: window)
+
+        #expect(copied.count == 1)
+        #expect(copied.first?.width == 1200)
+        #expect(copied.first?.scale == 2)
+        #expect(!editor.editorDocument.isDirty)
+        #expect(!window.isVisible)
+    }
+
+    @Test func discardClosesWithoutCopying() async throws {
+        let (editor, window) = try dirtyEditor("Discard")
+        defer { if window.isVisible { window.close() } }
+        var copies = 0
+        editor.copyImage = { _, _ in copies += 1 }
+
+        await editor.resolveClose(.alertThirdButtonReturn, window: window)
+
+        #expect(copies == 0)
+        #expect(!editor.editorDocument.isDirty)
+        #expect(!window.isVisible)
+    }
+
+    @Test func cancelKeepsTheWindowAndItsChanges() async throws {
+        let (editor, window) = try dirtyEditor("Cancel")
+        defer { editor.editorDocument.isDirty = false; if window.isVisible { window.close() } }
+        var copies = 0
+        editor.copyImage = { _, _ in copies += 1 }
+
+        await editor.resolveClose(.alertSecondButtonReturn, window: window)
+
+        #expect(copies == 0)
+        #expect(editor.editorDocument.isDirty)
+        #expect(window.isVisible)
+    }
+
     @Test func pixelationDestroysDetail() throws {
         let image = sampleImage()
         let doc = EditorDocument(image: image, scale: 2)
