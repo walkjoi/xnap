@@ -30,6 +30,7 @@ final class HotKeyCenter {
     }
 
     /// Registers (or replaces) the hotkey with `id`. Returns false if the combination is taken.
+    /// While paused, installing waits for `resume()`, so this returns true without checking.
     @discardableResult
     func register(id: UInt32, shortcut: Shortcut, handler: @escaping () -> Void) -> Bool {
         unregister(id: id)
